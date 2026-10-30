@@ -457,6 +457,10 @@ Dictionary Engine::snapshot_state(int p_parts) const {
 	rng["seed"] = (int64_t)Math::get_rand_seed();
 	rng["inc"] = (int64_t)Math::get_rand_inc();
 	rng["state"] = (int64_t)Math::get_rand_state();
+	// YGIAH (merge fix): the det-mode randomize() sequence position is engine
+	// state too — without it, a restored run that calls randomize() again would
+	// consume a different sequence index than the direct run did.
+	rng["det_randomize_count"] = (int64_t)CoreGlobals::deterministic_randomize_count;
 	state["rand"] = rng;
 
 	state["physics_frames"] = (int64_t)_physics_frames;
@@ -505,6 +509,9 @@ Error Engine::restore_state(const Dictionary &p_state) {
 		Math::set_rand_inc((uint64_t)(int64_t)rng.get("inc", 0));
 		Math::set_rand_seed((uint64_t)(int64_t)rng.get("seed", 0));
 		Math::set_rand_state((uint64_t)(int64_t)rng["state"]);
+	}
+	if (rng.has("det_randomize_count")) {
+		CoreGlobals::deterministic_randomize_count = (uint64_t)(int64_t)rng["det_randomize_count"];
 	}
 
 	_physics_frames = (uint64_t)(int64_t)p_state.get("physics_frames", 0);

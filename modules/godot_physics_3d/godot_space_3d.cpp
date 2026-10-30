@@ -1417,20 +1417,7 @@ Dictionary GodotSpace3D::_det_export_state() const {
 				jc.push_back(c);
 			}
 		}
-		struct _DetJLess {
-			_FORCE_INLINE_ bool operator()(GodotConstraint3D *a, GodotConstraint3D *b) const {
-				uint64_t ka[5], kb[5];
-				a->_det_get_key(ka);
-				b->_det_get_key(kb);
-				for (int i = 0; i < 5; i++) {
-					if (ka[i] != kb[i]) {
-						return ka[i] < kb[i];
-					}
-				}
-				return a < b;
-			}
-		};
-		jc.sort_custom<_DetJLess>();
+		jc.sort_custom<GodotDetConstraintLess>();
 		Array joints;
 		for (GodotConstraint3D *c : jc) {
 			Dictionary st = c->_det_export_state();
@@ -1695,20 +1682,7 @@ Error GodotSpace3D::_det_import_state(const Dictionary &d) {
 					}
 				}
 			}
-			struct _DetJLess2 {
-				_FORCE_INLINE_ bool operator()(GodotConstraint3D *a, GodotConstraint3D *b) const {
-					uint64_t ka[5], kb[5];
-					a->_det_get_key(ka);
-					b->_det_get_key(kb);
-					for (int i = 0; i < 5; i++) {
-						if (ka[i] != kb[i]) {
-							return ka[i] < kb[i];
-						}
-					}
-					return a < b;
-				}
-			};
-			live.sort_custom<_DetJLess2>();
+			live.sort_custom<GodotDetConstraintLess>();
 			HashMap<String, int> used;
 			for (GodotConstraint3D *c : live) {
 				uint64_t k[5];

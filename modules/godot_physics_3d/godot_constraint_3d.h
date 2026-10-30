@@ -106,7 +106,16 @@ inline bool godot_det_constraint_less(GodotConstraint3D *a, GodotConstraint3D *b
 			return ka[i] < kb[i];
 		}
 	}
-	return a < b; // Tie-break for same-key multi-constraints (documented residual gap).
+	// YGIAH (merge fix): same-key multi-constraints (e.g. two joints on one
+	// body pair — adv_stress rb19/rb72 flake) still need a canonical order.
+	// The constraint's self-RID id is allocated in creation order on the main
+	// thread — deterministic, unlike the pointer (ASLR-decided, observed to
+	// flip run-to-run and diverge the solver). Pointer remains only as the
+	// unreachable total-order backstop for RID-less constraints.
+	if (a->get_self() != b->get_self()) {
+		return a->get_self() < b->get_self();
+	}
+	return a < b;
 }
 
 struct GodotDetConstraintLess {

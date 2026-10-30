@@ -43,16 +43,10 @@
 
 // YGIAH (det-snapshot): canonical comparator — (lo_ord, lo_sub, hi_ord,
 // hi_sub, kind). Pointer/hash order must never decide solver order.
+// Delegates to the shared implementation so the RID-id tie-break for
+// same-key constraints stays identical at every sort site.
 static bool _det_constraint_less(GodotConstraint3D *a, GodotConstraint3D *b) {
-	uint64_t ka[5], kb[5];
-	a->_det_get_key(ka);
-	b->_det_get_key(kb);
-	for (int i = 0; i < 5; i++) {
-		if (ka[i] != kb[i]) {
-			return ka[i] < kb[i];
-		}
-	}
-	return a < b; // Total order tie-break: same-kind constraints on identical keys (documented residual gap).
+	return godot_det_constraint_less(a, b);
 }
 
 struct _DetConstraintLess {
