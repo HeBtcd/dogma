@@ -92,6 +92,13 @@ public:
 
 	virtual void update() override;
 
+	// YGIAH (det-snapshot): see GodotBroadPhase3D comments.
+	virtual AABB det_get_item_aabb(ID p_id) override;
+	virtual void det_set_pair_aabb(ID p_id, const AABB &p_aabb) override;
+	virtual void det_mark_changed(ID p_id) override;
+	virtual void det_for_each_pair(LocalVector<DetPairEntry> &r_pairs) override;
+	virtual void det_unpair(ID p_a, ID p_b) override;
+
 	static GodotBroadPhase3D *_create();
 	GodotBroadPhase3DBVH();
 };

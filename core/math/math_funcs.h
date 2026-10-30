@@ -704,6 +704,13 @@ uint32_t larger_prime(uint32_t p_val);
 
 void seed(uint64_t p_seed);
 void randomize();
+// YGIAH (det-snapshot): full default-RNG state accessors.
+uint64_t get_rand_seed();
+void set_rand_seed(uint64_t p_seed);
+uint64_t get_rand_inc();
+void set_rand_inc(uint64_t p_inc);
+uint64_t get_rand_state();
+void set_rand_state(uint64_t p_state);
 uint32_t rand_from_seed(uint64_t *p_seed);
 uint32_t rand();
 _ALWAYS_INLINE_ double randd() {

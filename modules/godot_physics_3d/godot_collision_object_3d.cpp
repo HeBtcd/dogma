@@ -33,6 +33,8 @@
 #include "godot_physics_server_3d.h"
 #include "godot_space_3d.h"
 
+#include "core/config/engine.h"
+
 void GodotCollisionObject3D::add_shape(GodotShape3D *p_shape, const Transform3D &p_transform, bool p_disabled) {
 	Shape s;
 	s.shape = p_shape;
@@ -228,6 +230,44 @@ void GodotCollisionObject3D::_set_space(GodotSpace3D *p_space) {
 	if (space) {
 		space->add_object(this);
 		_update_shapes();
+	}
+}
+
+void GodotCollisionObject3D::det_export_shape_pair_aabbs(Vector<AABB> &r_aabbs) const {
+	for (int i = 0; i < shapes.size(); i++) {
+		const Shape &s = shapes[i];
+		if (s.bpid && space) {
+			r_aabbs.push_back(space->get_broadphase()->det_get_item_aabb(s.bpid));
+		} else {
+			r_aabbs.push_back(s.aabb_cache);
+		}
+	}
+}
+
+void GodotCollisionObject3D::det_flush_shape_update(const Vector<AABB> &p_aabbs, const Vector<AABB> &p_pair_aabbs) {
+	if (p_aabbs.size() == shapes.size() && space) {
+		// Restore the captured broadphase AABBs verbatim: aabb_cache's grow
+		// margin depends on update history and can't be recomputed here.
+		for (int i = 0; i < shapes.size(); i++) {
+			Shape &s = shapes.write[i];
+			s.aabb_cache = p_aabbs[i];
+			Transform3D xform = transform * s.xform;
+			Vector3 scale = xform.get_basis().get_scale();
+			s.area_cache = s.shape->get_volume() * scale.x * scale.y * scale.z;
+			if (s.bpid && !s.disabled) {
+				if (i < p_pair_aabbs.size()) {
+					space->get_broadphase()->det_set_pair_aabb(s.bpid, p_pair_aabbs[i]);
+				} else {
+					space->get_broadphase()->move(s.bpid, s.aabb_cache);
+					space->get_broadphase()->det_mark_changed(s.bpid);
+				}
+			}
+		}
+	} else {
+		_update_shapes();
+	}
+	if (pending_shape_update_list.in_list()) {
+		GodotPhysicsServer3D::godot_singleton->pending_shape_update_list.remove(&pending_shape_update_list);
 	}
 }
 

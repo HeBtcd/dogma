@@ -270,6 +270,13 @@ public:
 	Vector3 get_global_rotation() const;
 	Vector3 get_global_rotation_degrees() const;
 
+	// YGIAH (det-snapshot): the euler/scale caches and dirty mask are
+	// continuation-relevant — look_at()/set_scale()/set_rotation() read them,
+	// and a lazily-diverged cache (basis stored verbatim while the cache was
+	// refreshed on an older basis) changes subsequent transforms by ~1e-7.
+	virtual Dictionary _det_capture_state() const override;
+	virtual void _det_restore_state(const Dictionary &p_state) override;
+
 	void set_transform(const Transform3D &p_transform);
 	void set_basis(const Basis &p_basis);
 	void set_quaternion(const Quaternion &p_quaternion);

@@ -51,6 +51,58 @@ Written by: Marcus Hennix
 
 #include "godot_cone_twist_joint_3d.h"
 
+// YGIAH (det-snapshot): frames frozen at joint_make + limit accumulators.
+Dictionary GodotConeTwistJoint3D::_det_export_state() const {
+	Dictionary d;
+	d["fA"] = m_rbAFrame;
+	d["fB"] = m_rbBFrame;
+	d["applied"] = m_appliedImpulse;
+	d["lsoft"] = m_limitSoftness;
+	d["biasf"] = m_biasFactor;
+	d["relax"] = m_relaxationFactor;
+	d["ss1"] = m_swingSpan1;
+	d["ss2"] = m_swingSpan2;
+	d["tspan"] = m_twistSpan;
+	d["swax"] = m_swingAxis;
+	d["twax"] = m_twistAxis;
+	d["kswing"] = m_kSwing;
+	d["ktwist"] = m_kTwist;
+	d["tlsign"] = m_twistLimitSign;
+	d["scorr"] = m_swingCorrection;
+	d["tcorr"] = m_twistCorrection;
+	d["accsw"] = m_accSwingLimitImpulse;
+	d["acctw"] = m_accTwistLimitImpulse;
+	d["aonly"] = m_angularOnly;
+	d["stwlim"] = m_solveTwistLimit;
+	d["sswlim"] = m_solveSwingLimit;
+	return d;
+}
+
+Error GodotConeTwistJoint3D::_det_import_state(const Dictionary &d) {
+	m_rbAFrame = d["fA"];
+	m_rbBFrame = d["fB"];
+	m_appliedImpulse = d["applied"];
+	m_limitSoftness = d["lsoft"];
+	m_biasFactor = d["biasf"];
+	m_relaxationFactor = d["relax"];
+	m_swingSpan1 = d["ss1"];
+	m_swingSpan2 = d["ss2"];
+	m_twistSpan = d["tspan"];
+	m_swingAxis = d["swax"];
+	m_twistAxis = d["twax"];
+	m_kSwing = d["kswing"];
+	m_kTwist = d["ktwist"];
+	m_twistLimitSign = d["tlsign"];
+	m_swingCorrection = d["scorr"];
+	m_twistCorrection = d["tcorr"];
+	m_accSwingLimitImpulse = d["accsw"];
+	m_accTwistLimitImpulse = d["acctw"];
+	m_angularOnly = d["aonly"];
+	m_solveTwistLimit = d["stwlim"];
+	m_solveSwingLimit = d["sswlim"];
+	return OK;
+}
+
 GodotConeTwistJoint3D::GodotConeTwistJoint3D(GodotBody3D *rbA, GodotBody3D *rbB, const Transform3D &rbAFrame, const Transform3D &rbBFrame) :
 		GodotJoint3D(_arr, 2) {
 	A = rbA;

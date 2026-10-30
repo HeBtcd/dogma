@@ -33,6 +33,7 @@
 #include "godot_area_3d.h"
 #include "godot_collision_object_3d.h"
 
+#include "core/config/engine.h"
 #include "core/templates/vset.h"
 #include "servers/physics_3d/physics_server_3d_constants.h"
 
@@ -193,6 +194,10 @@ public:
 	_FORCE_INLINE_ bool has_exception(const RID &p_exception) const { return exceptions.has(p_exception); }
 	_FORCE_INLINE_ const VSet<RID> &get_exceptions() const { return exceptions; }
 
+	// YGIAH (det-snapshot): pending-list membership (mass-properties update,
+	// direct-state query) is reconciled at import time — see
+	// godot_space_3d.cpp import path.
+
 	_FORCE_INLINE_ uint64_t get_island_step() const { return island_step; }
 	_FORCE_INLINE_ void set_island_step(uint64_t p_step) { island_step = p_step; }
 
@@ -343,6 +348,13 @@ public:
 	void wakeup_neighbours();
 
 	bool sleep_test(real_t p_step);
+
+	// YGIAH (det-snapshot): every solver-relevant field incl. biased/prev
+	// velocities, still_time, applied/constant forces, inertia caches and
+	// the contact-report vector. exceptions/areas/fi callbacks are not
+	// covered (documented gaps).
+	Dictionary _det_export_state() const;
+	Error _det_import_state(const Dictionary &p_state);
 
 	GodotBody3D();
 	~GodotBody3D();

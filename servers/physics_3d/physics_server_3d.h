@@ -108,6 +108,13 @@ public:
 	virtual Vector<Vector3> space_get_contacts(RID p_space) const = 0;
 	virtual int space_get_contact_count(RID p_space) const = 0;
 
+	// YGIAH (det-snapshot): internal solver-state export/import. Default
+	// implementations make this a documented no-op so other backends (Jolt,
+	// dummy, extensions) keep working without bit-exact continuation
+	// support; GodotPhysics3D overrides them.
+	virtual Dictionary space_export_state(RID p_space) const { return Dictionary(); }
+	virtual Error space_import_state(RID p_space, const Dictionary &p_state) { return ERR_UNAVAILABLE; }
+
 	//missing space parameters
 
 	/* AREA API */

@@ -35,7 +35,11 @@
 #include "core/core_globals.h"
 #include "core/donors.gen.h"
 #include "core/license.gen.h"
+#include "core/math/math_funcs.h"
+#include "core/object/message_queue.h"
 #include "core/object/object.h"
+#include "core/os/main_loop.h"
+#include "core/os/os.h"
 #include "core/variant/typed_array.h"
 #include "core/version.h"
 #ifdef RD_ENABLED
@@ -439,6 +443,78 @@ void Engine::set_embedded_in_editor(bool p_enabled) {
 
 bool Engine::is_embedded_in_editor() const {
 	return embedded_in_editor;
+}
+
+// YGIAH (det-snapshot): compose the engine-internal deterministic snapshot.
+// Scene-level internals are delegated to the MainLoop virtuals; physics-space
+// internals are exported separately through PhysicsServer3D because they are
+// keyed by World3D rather than by the global engine.
+Dictionary Engine::snapshot_state(int p_parts) const {
+	Dictionary state;
+	state["version"] = 1;
+
+	Dictionary rng;
+	rng["seed"] = (int64_t)Math::get_rand_seed();
+	rng["inc"] = (int64_t)Math::get_rand_inc();
+	rng["state"] = (int64_t)Math::get_rand_state();
+	state["rand"] = rng;
+
+	state["physics_frames"] = (int64_t)_physics_frames;
+	state["process_frames"] = (int64_t)_process_frames;
+
+	if (p_parts & 1) {
+		state["object_db"] = ObjectDB::snapshot_state();
+	}
+
+	if (p_parts & 2) {
+		CallQueue *mq = MessageQueue::get_singleton();
+		state["message_queue"] = mq ? mq->snapshot_pending() : Array();
+	}
+
+	MainLoop *main_loop = OS::get_singleton() ? OS::get_singleton()->get_main_loop() : nullptr;
+	if (main_loop) {
+		int ml_parts = (p_parts & 4) ? 0x3 : 0;
+		if (p_parts & 8) {
+			ml_parts |= 0x1; // scalars+timers+tweens only, no per-node traversal
+		}
+		if (ml_parts) {
+			state["main_loop"] = main_loop->_snapshot_det_state(ml_parts);
+		}
+	}
+	return state;
+}
+
+Error Engine::restore_state(const Dictionary &p_state) {
+	ERR_FAIL_COND_V((int)p_state.get("version", -1) != 1, ERR_INVALID_DATA);
+
+	// MainLoop first: it recreates SceneTree timers/tweens and restores
+	// per-node internals, claiming their original ObjectIDs along the way.
+	MainLoop *main_loop = OS::get_singleton() ? OS::get_singleton()->get_main_loop() : nullptr;
+	if (main_loop && p_state.has("main_loop")) {
+		Error err = main_loop->_restore_det_state(p_state["main_loop"]);
+		ERR_FAIL_COND_V(err != OK, err);
+	}
+
+	// ObjectDB after all reclaimable objects exist again.
+	if (p_state.has("object_db")) {
+		ObjectDB::restore_state(p_state["object_db"]);
+	}
+
+	Dictionary rng = p_state.get("rand", Dictionary());
+	if (rng.has("state")) {
+		Math::set_rand_inc((uint64_t)(int64_t)rng.get("inc", 0));
+		Math::set_rand_seed((uint64_t)(int64_t)rng.get("seed", 0));
+		Math::set_rand_state((uint64_t)(int64_t)rng["state"]);
+	}
+
+	_physics_frames = (uint64_t)(int64_t)p_state.get("physics_frames", 0);
+	_process_frames = (uint64_t)(int64_t)p_state.get("process_frames", 0);
+
+	CallQueue *mq = MessageQueue::get_singleton();
+	if (mq && p_state.has("message_queue")) {
+		mq->restore_pending(p_state["message_queue"]);
+	}
+	return OK;
 }
 
 Engine::Engine() {

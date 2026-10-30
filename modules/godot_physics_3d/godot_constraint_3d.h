@@ -32,6 +32,7 @@
 
 #include "core/templates/rid.h"
 #include "core/typedefs.h"
+#include "core/variant/dictionary.h"
 
 class GodotBody3D;
 class GodotSoftBody3D;
@@ -77,5 +78,50 @@ public:
 	virtual bool pre_solve(real_t p_step) = 0;
 	virtual void solve(real_t p_step) = 0;
 
+	// YGIAH (det-snapshot): canonical sort key so constraint order never
+	// leaks pointer/hash order into the solver. r_key is a 5-element tuple:
+	// {lo_body_ord, lo_subindex, hi_body_ord, hi_subindex, kind}.
+	virtual void _det_get_key(uint64_t r_key[5]) const;
+	// 0 = generic/joint, 1 = body-body contact pair, 2 = body-soft pair,
+	// 3+ = area pairs. Used as last sort-key element and by state export.
+	virtual uint32_t _det_kind() const { return 0; }
+
+	// YGIAH (det-snapshot): solver-internal persistent state for
+	// joint/constraints that cannot be re-derived from the scene. Body pairs
+	// and joints override; an empty export means "nothing to serialize".
+	virtual Dictionary _det_export_state() const { return Dictionary(); }
+	virtual Error _det_import_state(const Dictionary &) { return ERR_UNAVAILABLE; }
+
 	virtual ~GodotConstraint3D() {}
+};
+
+// YGIAH (det-snapshot): canonical comparator — (lo_ord, lo_sub, hi_ord,
+// hi_sub, kind). Pointer/hash order must never decide solver order.
+inline bool godot_det_constraint_less(GodotConstraint3D *a, GodotConstraint3D *b) {
+	uint64_t ka[5], kb[5];
+	a->_det_get_key(ka);
+	b->_det_get_key(kb);
+	for (int i = 0; i < 5; i++) {
+		if (ka[i] != kb[i]) {
+			return ka[i] < kb[i];
+		}
+	}
+	return a < b; // Tie-break for same-key multi-constraints (documented residual gap).
+}
+
+struct GodotDetConstraintLess {
+	_FORCE_INLINE_ bool operator()(GodotConstraint3D *a, GodotConstraint3D *b) const {
+		return godot_det_constraint_less(a, b);
+	}
+};
+
+struct GodotDetCMapEntry {
+	GodotConstraint3D *key;
+	int value;
+};
+
+struct GodotDetCMapEntryLess {
+	_FORCE_INLINE_ bool operator()(const GodotDetCMapEntry &a, const GodotDetCMapEntry &b) const {
+		return godot_det_constraint_less(a.key, b.key);
+	}
 };

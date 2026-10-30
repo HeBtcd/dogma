@@ -428,6 +428,43 @@ Transform3D Node3D::get_transform() const {
 	return data.local_transform;
 }
 
+// YGIAH (det-snapshot): verbatim dump of the node's transform-relevant
+// internals — the stored local transform, the lazily-maintained
+// euler/scale caches (which may legitimately disagree with the stored
+// basis: get_scale() only refreshes on read while dirty), the dirty
+// mask so post-restore lazy recomputation follows the same path, and
+// the cached global transforms verbatim. The globals MUST round-trip:
+// a clean dirty bit means get_global_transform() serves the cache, and
+// a fresh node's cache is identity — keep-global reparent() (and any
+// other global-transform read) would then compute against garbage.
+Dictionary Node3D::_det_capture_state() const {
+	Dictionary d;
+	d["lt"] = data.local_transform;
+	d["gt"] = data.global_transform;
+	d["gti"] = data.global_transform_interpolated;
+	d["ltp"] = data.local_transform_prev;
+	d["top_level"] = data.top_level;
+	d["euler"] = data.euler_rotation;
+	d["scale"] = data.scale;
+	d["euler_order"] = (int)data.euler_rotation_order;
+	d["rot_edit_mode"] = (int)data.rotation_edit_mode;
+	d["dirty"] = (int64_t)_read_dirty_mask();
+	return d;
+}
+
+void Node3D::_det_restore_state(const Dictionary &d) {
+	data.local_transform = d["lt"];
+	data.global_transform = d["gt"];
+	data.global_transform_interpolated = d["gti"];
+	data.local_transform_prev = d["ltp"];
+	data.top_level = d["top_level"];
+	data.euler_rotation = d["euler"];
+	data.scale = d["scale"];
+	data.euler_rotation_order = (EulerOrder)(int)d["euler_order"];
+	data.rotation_edit_mode = (RotationEditMode)(int)d["rot_edit_mode"];
+	_replace_dirty_mask((uint32_t)(int64_t)d["dirty"]);
+}
+
 // Return false to timeout and remove from the client interpolation list.
 bool Node3D::update_client_physics_interpolation_data() {
 	if (!is_inside_tree() || !_is_physics_interpolated_client_side()) {

@@ -482,6 +482,12 @@ public:
 	bool is_dummy() const;
 #endif // TOOLS_ENABLED
 
+	// YGIAH (det-snapshot): hidden playback internals — active instances with
+	// full PlaybackInfo, root-motion accumulators, capture cache, blend pass
+	// counters. Caches keyed by object pointer/id are rebuilt on restore.
+	Dictionary _det_capture_state() const override;
+	void _det_restore_state(const Dictionary &p_state) override;
+
 	AnimationMixer();
 	~AnimationMixer();
 };

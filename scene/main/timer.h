@@ -76,6 +76,11 @@ public:
 
 	double get_time_left() const;
 
+	// YGIAH (det-snapshot): expose the private cadence fields so a restored
+	// timer continues ticking at the exact phase it had when captured.
+	Dictionary _det_capture_state() const override;
+	void _det_restore_state(const Dictionary &p_state) override;
+
 	PackedStringArray get_configuration_warnings() const override;
 
 	void set_timer_process_callback(TimerProcessCallback p_callback);

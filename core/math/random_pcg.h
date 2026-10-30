@@ -71,6 +71,15 @@ public:
 	_FORCE_INLINE_ void set_state(uint64_t p_state) { pcg.state = p_state; }
 	_FORCE_INLINE_ uint64_t get_state() const { return pcg.state; }
 
+	// YGIAH (det-snapshot): expose the stream increment so the whole PCG
+	// state tuple (seed, inc, state) can be restored exactly. get_inc()
+	// returns the initseq selector; the live generator's pcg.inc is
+	// (initseq<<1)|1, exactly as pcg32_srandom_r() derives it — restoring
+	// must apply the same derivation or the stream diverges.
+	_FORCE_INLINE_ void set_inc(uint64_t p_inc) { current_inc = p_inc; pcg.inc = (p_inc << 1u) | 1u; }
+	_FORCE_INLINE_ uint64_t get_inc() const { return current_inc; }
+	_FORCE_INLINE_ void set_seed_keep_state(uint64_t p_seed) { current_seed = p_seed; }
+
 	void randomize();
 	_FORCE_INLINE_ uint32_t rand() {
 		return pcg32_random_r(&pcg);

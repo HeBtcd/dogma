@@ -41,6 +41,40 @@
 #define ISLAND_SIZE_RESERVE 512
 #define CONSTRAINT_COUNT_RESERVE 1024
 
+// YGIAH (det-snapshot): canonical comparator — (lo_ord, lo_sub, hi_ord,
+// hi_sub, kind). Pointer/hash order must never decide solver order.
+static bool _det_constraint_less(GodotConstraint3D *a, GodotConstraint3D *b) {
+	uint64_t ka[5], kb[5];
+	a->_det_get_key(ka);
+	b->_det_get_key(kb);
+	for (int i = 0; i < 5; i++) {
+		if (ka[i] != kb[i]) {
+			return ka[i] < kb[i];
+		}
+	}
+	return a < b; // Total order tie-break: same-kind constraints on identical keys (documented residual gap).
+}
+
+struct _DetConstraintLess {
+	_FORCE_INLINE_ bool operator()(GodotConstraint3D *a, GodotConstraint3D *b) const {
+		return _det_constraint_less(a, b);
+	}
+};
+struct _DetConstraintKVLess {
+	_FORCE_INLINE_ bool operator()(const KeyValue<GodotConstraint3D *, int> &a, const KeyValue<GodotConstraint3D *, int> &b) const {
+		return _det_constraint_less(a.key, b.key);
+	}
+};
+struct _DetCMapEntry {
+	GodotConstraint3D *key;
+	int value;
+};
+struct _DetCMapEntryLess {
+	_FORCE_INLINE_ bool operator()(const _DetCMapEntry &a, const _DetCMapEntry &b) const {
+		return _det_constraint_less(a.key, b.key);
+	}
+};
+
 void GodotStep3D::_populate_island(GodotBody3D *p_body, LocalVector<GodotBody3D *> &p_body_island, LocalVector<GodotConstraint3D *> &p_constraint_island) {
 	p_body->set_island_step(_step);
 
@@ -49,7 +83,15 @@ void GodotStep3D::_populate_island(GodotBody3D *p_body, LocalVector<GodotBody3D 
 		p_body_island.push_back(p_body);
 	}
 
+	// YGIAH: iterate the constraint map in canonical order; HashMap order
+	// depends on pointer hashing and differs between baseline and restore.
+	LocalVector<_DetCMapEntry> sorted_constraints;
 	for (const KeyValue<GodotConstraint3D *, int> &E : p_body->get_constraint_map()) {
+		sorted_constraints.push_back({ E.key, E.value });
+	}
+	sorted_constraints.sort_custom<_DetCMapEntryLess>();
+
+	for (const _DetCMapEntry &E : sorted_constraints) {
 		GodotConstraint3D *constraint = E.key;
 		if (constraint->get_island_step() == _step) {
 			continue; // Already processed.
@@ -88,8 +130,14 @@ void GodotStep3D::_populate_island(GodotBody3D *p_body, LocalVector<GodotBody3D 
 void GodotStep3D::_populate_island_soft_body(GodotSoftBody3D *p_soft_body, LocalVector<GodotBody3D *> &p_body_island, LocalVector<GodotConstraint3D *> &p_constraint_island) {
 	p_soft_body->set_island_step(_step);
 
+	// YGIAH: canonical order, same rationale as _populate_island().
+	LocalVector<GodotConstraint3D *> sorted_constraints;
 	for (GodotConstraint3D *E : p_soft_body->get_constraints()) {
-		GodotConstraint3D *constraint = E;
+		sorted_constraints.push_back(E);
+	}
+	sorted_constraints.sort_custom<_DetConstraintLess>();
+
+	for (GodotConstraint3D *constraint : sorted_constraints) {
 		if (constraint->get_island_step() == _step) {
 			continue; // Already processed.
 		}
@@ -237,8 +285,13 @@ void GodotStep3D::step(GodotSpace3D *p_space, real_t p_delta) {
 	const SelfList<GodotArea3D>::List &aml = p_space->get_moved_area_list();
 
 	while (aml.first()) {
+		// YGIAH: canonical constraint order for area islands too.
+		LocalVector<GodotConstraint3D *> sorted_area_constraints;
 		for (GodotConstraint3D *E : aml.first()->self()->get_constraints()) {
-			GodotConstraint3D *constraint = E;
+			sorted_area_constraints.push_back(E);
+		}
+		sorted_area_constraints.sort_custom<_DetConstraintLess>();
+		for (GodotConstraint3D *constraint : sorted_area_constraints) {
 			if (constraint->get_island_step() == _step) {
 				continue;
 			}

@@ -640,6 +640,12 @@ public:
 	void set_print_error_messages(bool p_enabled);
 	bool is_printing_error_messages() const;
 
+	// YGIAH (det-snapshot): manual stepping + engine-internal state snapshot.
+	void step(int p_steps);
+	Dictionary snapshot_state(int p_parts = 0xF) const;
+	Error restore_state(const Dictionary &p_state);
+	void object_claim_instance_id(Object *p_object, int64_t p_id);
+
 #ifdef TOOLS_ENABLED
 	virtual void get_argument_options(const StringName &p_function, int p_idx, List<String> *r_options) const override;
 #endif

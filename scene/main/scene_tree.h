@@ -338,6 +338,12 @@ public:
 	}
 
 	void flush_transform_notifications();
+	// YGIAH (det-snapshot): drop pending transform-change notifications
+	// without dispatching them. Scene rebuilds under _restore_det_state queue
+	// every descendant CollisionObject3D; flushing them afterwards would
+	// issue body_set_state(BODY_STATE_TRANSFORM) on imported bodies,
+	// re-waking sleepers and re-orthonormalizing captured transforms.
+	void discard_transform_notifications();
 
 	bool is_accessibility_enabled() const;
 	bool is_accessibility_supported() const;
@@ -355,6 +361,16 @@ public:
 	virtual bool process(double p_time) override;
 
 	virtual void finalize() override;
+
+	// YGIAH (det-snapshot): SceneTree-level deterministic state.
+	// Captures frame/time counters, SceneTree timers (with connections),
+	// tweens (with nested tweener state) and each node's _det_capture_state.
+	// The delete queue is flushed first so the snapshot boundary matches the
+	// end-of-physics-frame allocator state of the baseline run.
+	virtual Dictionary _snapshot_det_state(int p_parts = 0x3) override;
+	virtual Error _restore_det_state(const Dictionary &p_state) override;
+	void _det_capture_node(Node *p_node, int p_depth, Array &r_nodes) const;
+	void _det_restore_node(Node *p_node, int p_depth, const Array &p_nodes, int &r_idx);
 
 	bool is_auto_accept_quit() const;
 	void set_auto_accept_quit(bool p_enable);

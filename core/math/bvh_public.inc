@@ -310,6 +310,19 @@ void item_get_ABB(const BVHHandle &p_handle, BVHABB_CLASS &r_abb) {
 	r_abb = leaf.get_aabb(ref.item_id);
 }
 
+// YGIAH (det-snapshot): set a leaf item's stored AABB verbatim and refit
+// ancestors. Snapshot import must reproduce the pairing AABB's accumulated
+// hysteresis (expansion margin is scaled by pair count at move time), which
+// the normal move() path deliberately cannot reproduce.
+void item_set_AABB_verbatim(const BVHHandle &p_handle, const BVHABB_CLASS &p_abb) {
+	uint32_t ref_id = p_handle.id();
+	ItemRef &ref = _refs[ref_id];
+	TNode &tnode = _nodes[ref.tnode_id];
+	TLeaf &leaf = _node_get_leaf(tnode);
+	leaf.get_aabb(ref.item_id) = p_abb;
+	refit_upward(ref.tnode_id);
+}
+
 bool item_set_tree(const BVHHandle &p_handle, uint32_t p_tree_id, uint32_t p_tree_collision_mask) {
 	// change tree?
 	uint32_t ref_id = p_handle.id();

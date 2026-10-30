@@ -83,6 +83,9 @@ public:
 	}
 
 	virtual PS3DE::JointType get_type() const { return PS3DE::JOINT_TYPE_MAX; }
+	// YGIAH (det-snapshot): mark joints so space export can tell them apart
+	// from area/soft-body pairs (which keep the generic kind 0).
+	virtual uint32_t _det_kind() const override { return 2; }
 	_FORCE_INLINE_ GodotJoint3D(GodotBody3D **p_body_ptr = nullptr, int p_body_count = 0) :
 			GodotConstraint3D(p_body_ptr, p_body_count) {
 	}

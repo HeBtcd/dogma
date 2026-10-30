@@ -129,6 +129,10 @@ private:
 	bool movie_quit_on_finish = false;
 	bool clear_cache_on_stop = true;
 
+	// YGIAH (det-snapshot)
+	static Dictionary _det_serialize_playback_data(const PlaybackData &pd);
+	static PlaybackData _det_deserialize_playback_data(const Dictionary &d);
+
 	void _play(const StringName &p_name, double p_custom_blend = -1, float p_custom_scale = 1.0, bool p_from_end = false);
 	void _capture(const StringName &p_name, bool p_from_end = false, double p_duration = -1.0, Tween::TransitionType p_trans_type = Tween::TRANS_LINEAR, Tween::EaseType p_ease_type = Tween::EASE_IN);
 	void _process_playback_data(PlaybackData &cd, double p_delta, float p_blend, bool p_seeked, bool p_internal_seeked, bool p_started, bool p_is_current = false);
@@ -250,6 +254,11 @@ public:
 	bool has_section() const;
 
 	virtual void advance(double p_time) override;
+
+	// YGIAH (det-snapshot): playback struct (current + blends), queue,
+	// blend_times, next-set and flags — all invisible to the script API.
+	Dictionary _det_capture_state() const override;
+	void _det_restore_state(const Dictionary &p_state) override;
 
 	AnimationPlayer();
 	~AnimationPlayer();

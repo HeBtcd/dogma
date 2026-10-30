@@ -1085,3 +1085,148 @@ AnimationPlayer::AnimationPlayer() {
 
 AnimationPlayer::~AnimationPlayer() {
 }
+
+/* --------- YGIAH (det-snapshot) --------- */
+
+Dictionary AnimationPlayer::_det_serialize_playback_data(const PlaybackData &pd) {
+	Dictionary d;
+	d["is_enabled"] = pd.is_enabled;
+	d["animation_name"] = pd.animation_name;
+	d["animation_length"] = pd.animation_length;
+	d["pos"] = pd.pos;
+	d["speed_scale"] = pd.speed_scale;
+	d["start_time"] = pd.start_time;
+	d["end_time"] = pd.end_time;
+	return d;
+}
+
+AnimationPlayer::PlaybackData AnimationPlayer::_det_deserialize_playback_data(const Dictionary &d) {
+	PlaybackData pd;
+	pd.is_enabled = d.get("is_enabled", false);
+	pd.animation_name = d.get("animation_name", String());
+	pd.animation_length = d.get("animation_length", 0.0);
+	pd.pos = d.get("pos", 0.0);
+	pd.speed_scale = d.get("speed_scale", 1.0f);
+	pd.start_time = d.get("start_time", 0.0);
+	pd.end_time = d.get("end_time", 0.0);
+	return pd;
+}
+
+Dictionary AnimationPlayer::_det_capture_state() const {
+	Dictionary d = AnimationMixer::_det_capture_state();
+
+	Dictionary pb;
+	pb["current"] = _det_serialize_playback_data(playback.current);
+	pb["assigned"] = playback.assigned;
+	pb["seeked"] = playback.seeked;
+	pb["internal_seeked"] = playback.internal_seeked;
+	pb["started"] = playback.started;
+	Array blends;
+	for (const Blend &b : playback.blend) {
+		Dictionary bd;
+		bd["data"] = _det_serialize_playback_data(b.data);
+		bd["blend_time"] = b.blend_time;
+		bd["blend_left"] = b.blend_left;
+		blends.push_back(bd);
+	}
+	pb["blend"] = blends;
+	d["playback"] = pb;
+
+	Dictionary bt;
+	for (const KeyValue<BlendKey, double> &E : blend_times) {
+		Dictionary e;
+		e["from"] = E.key.from;
+		e["to"] = E.key.to;
+		e["time"] = E.value;
+		bt[itos(bt.size())] = e;
+	}
+	d["blend_times"] = bt;
+
+	Array queue;
+	for (const StringName &s : playback_queue) {
+		queue.push_back(s);
+	}
+	d["playback_queue"] = queue;
+
+	Dictionary nxt;
+	for (const KeyValue<StringName, StringName> &E : animation_next_set) {
+		nxt[String(E.key)] = E.value;
+	}
+	d["animation_next_set"] = nxt;
+
+	d["finished_anim"] = finished_anim;
+	d["speed_scale"] = speed_scale;
+	d["default_blend_time"] = default_blend_time;
+	d["auto_capture"] = auto_capture;
+	d["auto_capture_duration"] = auto_capture_duration;
+	d["auto_capture_transition_type"] = (int)auto_capture_transition_type;
+	d["auto_capture_ease_type"] = (int)auto_capture_ease_type;
+	d["tmp_from"] = (int64_t)(uint64_t)tmp_from;
+	d["end_reached"] = end_reached;
+	d["end_notify"] = end_notify;
+	d["autoplay"] = autoplay;
+	d["movie_quit_on_finish"] = movie_quit_on_finish;
+	d["clear_cache_on_stop"] = clear_cache_on_stop;
+	d["playing"] = playing;
+	return d;
+}
+
+void AnimationPlayer::_det_restore_state(const Dictionary &d) {
+	AnimationMixer::_det_restore_state(d);
+
+	Dictionary pb = d.get("playback", Dictionary());
+	playback.current = _det_deserialize_playback_data(pb.get("current", Dictionary()));
+	playback.assigned = pb.get("assigned", StringName());
+	playback.seeked = pb.get("seeked", false);
+	playback.internal_seeked = pb.get("internal_seeked", false);
+	playback.started = pb.get("started", false);
+	playback.blend.clear();
+	Array blends = pb.get("blend", Array());
+	for (int i = 0; i < blends.size(); i++) {
+		Dictionary bd = blends[i];
+		Blend b;
+		b.data = _det_deserialize_playback_data(bd["data"]);
+		b.blend_time = bd["blend_time"];
+		b.blend_left = bd["blend_left"];
+		playback.blend.push_back(b);
+	}
+
+	blend_times.clear();
+	Dictionary bt = d.get("blend_times", Dictionary());
+	Array keys = bt.keys();
+	for (int i = 0; i < keys.size(); i++) {
+		Dictionary e = bt[keys[i]];
+		BlendKey bk;
+		bk.from = e["from"];
+		bk.to = e["to"];
+		blend_times[bk] = e["time"];
+	}
+
+	playback_queue.clear();
+	Array queue = d.get("playback_queue", Array());
+	for (int i = 0; i < queue.size(); i++) {
+		playback_queue.push_back(queue[i]);
+	}
+
+	animation_next_set.clear();
+	Dictionary nxt = d.get("animation_next_set", Dictionary());
+	Array nkeys = nxt.keys();
+	for (int i = 0; i < nkeys.size(); i++) {
+		animation_next_set[StringName(String(nkeys[i]))] = nxt[nkeys[i]];
+	}
+
+	finished_anim = d.get("finished_anim", StringName());
+	speed_scale = d.get("speed_scale", 1.0f);
+	default_blend_time = d.get("default_blend_time", 0.0);
+	auto_capture = d.get("auto_capture", true);
+	auto_capture_duration = d.get("auto_capture_duration", -1.0);
+	auto_capture_transition_type = (Tween::TransitionType)(int)d.get("auto_capture_transition_type", Tween::TRANS_LINEAR);
+	auto_capture_ease_type = (Tween::EaseType)(int)d.get("auto_capture_ease_type", Tween::EASE_IN);
+	tmp_from = ObjectID((uint64_t)(int64_t)d.get("tmp_from", 0));
+	end_reached = d.get("end_reached", false);
+	end_notify = d.get("end_notify", false);
+	autoplay = d.get("autoplay", StringName());
+	movie_quit_on_finish = d.get("movie_quit_on_finish", false);
+	clear_cache_on_stop = d.get("clear_cache_on_stop", true);
+	playing = d.get("playing", false);
+}

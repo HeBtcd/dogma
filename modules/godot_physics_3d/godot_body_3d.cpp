@@ -738,7 +738,15 @@ void GodotBody3D::integrate_velocities(real_t p_step) {
 }
 
 void GodotBody3D::wakeup_neighbours() {
+	// YGIAH: canonical order — HashMap iteration is pointer-hashed; wake order
+	// feeds active_list prepend order and islands, so it must not depend on
+	// allocation addresses (which differ after scene rebuild/restore).
+	LocalVector<GodotDetCMapEntry> sorted;
 	for (const KeyValue<GodotConstraint3D *, int> &E : constraint_map) {
+		sorted.push_back({ E.key, E.value });
+	}
+	sorted.sort_custom<GodotDetCMapEntryLess>();
+	for (const GodotDetCMapEntry &E : sorted) {
 		const GodotConstraint3D *c = E.key;
 		GodotBody3D **n = c->get_body_ptr();
 		int bc = c->get_body_count();
@@ -835,4 +843,165 @@ GodotBody3D::GodotBody3D() :
 GodotBody3D::~GodotBody3D() {
 	memdelete(fi_callback_data);
 	memdelete(direct_state);
+}
+
+/* --------- YGIAH (det-snapshot) --------- */
+
+Dictionary GodotBody3D::_det_export_state() const {
+	Dictionary d;
+	d["ord"] = (int64_t)get_det_ordinal();
+	d["instance_id"] = (int64_t)(uint64_t)get_instance_id();
+	d["mode"] = (int)mode;
+	d["transform"] = get_transform();
+	d["inv_transform"] = get_inv_transform();
+	d["new_transform"] = new_transform;
+	d["static"] = is_static();
+	d["ray_pickable"] = is_ray_pickable();
+	d["collision_layer"] = (int64_t)get_collision_layer();
+	d["collision_mask"] = (int64_t)get_collision_mask();
+	d["collision_priority"] = get_collision_priority();
+	d["linear_velocity"] = linear_velocity;
+	d["angular_velocity"] = angular_velocity;
+	d["prev_linear_velocity"] = prev_linear_velocity;
+	d["prev_angular_velocity"] = prev_angular_velocity;
+	d["constant_linear_velocity"] = constant_linear_velocity;
+	d["constant_angular_velocity"] = constant_angular_velocity;
+	d["biased_linear_velocity"] = biased_linear_velocity;
+	d["biased_angular_velocity"] = biased_angular_velocity;
+	d["mass"] = mass;
+	d["bounce"] = bounce;
+	d["friction"] = friction;
+	d["inertia"] = inertia;
+	d["linear_damp_mode"] = (int)linear_damp_mode;
+	d["angular_damp_mode"] = (int)angular_damp_mode;
+	d["linear_damp"] = linear_damp;
+	d["angular_damp"] = angular_damp;
+	d["total_linear_damp"] = total_linear_damp;
+	d["total_angular_damp"] = total_angular_damp;
+	d["gravity_scale"] = gravity_scale;
+	d["locked_axis"] = (int)locked_axis;
+	d["inv_mass"] = _inv_mass;
+	d["inv_inertia"] = _inv_inertia;
+	d["principal_inertia_axes_local"] = principal_inertia_axes_local;
+	d["center_of_mass_local"] = center_of_mass_local;
+	d["inv_inertia_tensor"] = _inv_inertia_tensor;
+	d["principal_inertia_axes"] = principal_inertia_axes;
+	d["center_of_mass"] = center_of_mass;
+	d["calculate_inertia"] = calculate_inertia;
+	d["calculate_center_of_mass"] = calculate_center_of_mass;
+	d["gravity"] = gravity;
+	d["still_time"] = still_time;
+	d["applied_force"] = applied_force;
+	d["applied_torque"] = applied_torque;
+	d["constant_force"] = constant_force;
+	d["constant_torque"] = constant_torque;
+	d["omit_force_integration"] = omit_force_integration;
+	d["active"] = active;
+	d["continuous_cd"] = continuous_cd;
+	d["can_sleep"] = can_sleep;
+	d["first_time_kinematic"] = first_time_kinematic;
+	d["island_step"] = (int64_t)island_step;
+
+	Array cc;
+	for (int i = 0; i < contact_count; i++) {
+		const Contact &c = contacts[i];
+		Dictionary cd;
+		cd["local_pos"] = c.local_pos;
+		cd["local_normal"] = c.local_normal;
+		cd["local_velocity_at_pos"] = c.local_velocity_at_pos;
+		cd["depth"] = c.depth;
+		cd["local_shape"] = c.local_shape;
+		cd["collider_pos"] = c.collider_pos;
+		cd["collider_shape"] = c.collider_shape;
+		cd["collider_instance_id"] = (int64_t)(uint64_t)c.collider_instance_id;
+		cd["collider_velocity_at_pos"] = c.collider_velocity_at_pos;
+		cd["impulse"] = c.impulse;
+		cc.push_back(cd);
+	}
+	d["contacts"] = cc;
+	d["contact_count"] = contact_count;
+	d["max_contacts_reported"] = (int64_t)contacts.size();
+	return d;
+}
+
+Error GodotBody3D::_det_import_state(const Dictionary &d) {
+	set_det_ordinal((uint64_t)(int64_t)d["ord"]);
+	mode = (PS3DE::BodyMode)(int)d["mode"];
+	set_collision_layer((uint32_t)(int64_t)d["collision_layer"]);
+	set_collision_mask((uint32_t)(int64_t)d["collision_mask"]);
+	set_collision_priority(d["collision_priority"]);
+	set_ray_pickable(d["ray_pickable"]);
+	if (is_static() != (bool)d["static"]) {
+		_set_static(d["static"]);
+	}
+	_set_transform(d["transform"], false);
+	_set_inv_transform(d["inv_transform"]);
+	new_transform = d["new_transform"];
+	linear_velocity = d["linear_velocity"];
+	angular_velocity = d["angular_velocity"];
+	prev_linear_velocity = d["prev_linear_velocity"];
+	prev_angular_velocity = d["prev_angular_velocity"];
+	constant_linear_velocity = d["constant_linear_velocity"];
+	constant_angular_velocity = d["constant_angular_velocity"];
+	biased_linear_velocity = d["biased_linear_velocity"];
+	biased_angular_velocity = d["biased_angular_velocity"];
+	mass = d["mass"];
+	bounce = d["bounce"];
+	friction = d["friction"];
+	inertia = d["inertia"];
+	linear_damp_mode = (PS3DE::BodyDampMode)(int)d["linear_damp_mode"];
+	angular_damp_mode = (PS3DE::BodyDampMode)(int)d["angular_damp_mode"];
+	linear_damp = d["linear_damp"];
+	angular_damp = d["angular_damp"];
+	total_linear_damp = d["total_linear_damp"];
+	total_angular_damp = d["total_angular_damp"];
+	gravity_scale = d["gravity_scale"];
+	locked_axis = (uint16_t)(int)d["locked_axis"];
+	_inv_mass = d["inv_mass"];
+	_inv_inertia = d["inv_inertia"];
+	principal_inertia_axes_local = d["principal_inertia_axes_local"];
+	center_of_mass_local = d["center_of_mass_local"];
+	_inv_inertia_tensor = d["inv_inertia_tensor"];
+	principal_inertia_axes = d["principal_inertia_axes"];
+	center_of_mass = d["center_of_mass"];
+	calculate_inertia = d["calculate_inertia"];
+	calculate_center_of_mass = d["calculate_center_of_mass"];
+	gravity = d["gravity"];
+	still_time = d["still_time"];
+	applied_force = d["applied_force"];
+	applied_torque = d["applied_torque"];
+	constant_force = d["constant_force"];
+	constant_torque = d["constant_torque"];
+	omit_force_integration = d["omit_force_integration"];
+	continuous_cd = d["continuous_cd"];
+	can_sleep = d["can_sleep"];
+	first_time_kinematic = d["first_time_kinematic"];
+	island_step = (uint64_t)(int64_t)d["island_step"];
+
+	int maxc = d.get("max_contacts_reported", 0);
+	if ((int)contacts.size() != maxc) {
+		set_max_contacts_reported(maxc);
+	}
+	Array cc = d["contacts"];
+	contact_count = MIN((int)d["contact_count"], (int)cc.size());
+	for (int i = 0; i < contact_count && i < (int)contacts.size(); i++) {
+		Dictionary cd = cc[i];
+		Contact &c = contacts.write[i];
+		c.local_pos = cd["local_pos"];
+		c.local_normal = cd["local_normal"];
+		c.local_velocity_at_pos = cd["local_velocity_at_pos"];
+		c.depth = cd["depth"];
+		c.local_shape = cd["local_shape"];
+		c.collider_pos = cd["collider_pos"];
+		c.collider_shape = cd["collider_shape"];
+		c.collider_instance_id = ObjectID((uint64_t)(int64_t)cd["collider_instance_id"]);
+		c.collider_velocity_at_pos = cd["collider_velocity_at_pos"];
+		c.impulse = cd["impulse"];
+	}
+
+	// Re-arm the active list through the real setter so SelfList membership
+	// is consistent; activation order follows import (ordinal) order, which
+	// only affects island numbering, not solver results.
+	set_active(d["active"]);
+	return OK;
 }

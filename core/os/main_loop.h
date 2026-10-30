@@ -68,5 +68,12 @@ public:
 	virtual bool process(double p_time);
 	virtual void finalize();
 
+	// YGIAH (det-snapshot): engine-internal deterministic state hooks.
+	// SceneTree overrides these to cover frame counters, timers, tweens and
+	// per-node internal state. The default is "no state" so custom main
+	// loops keep working; they simply get an empty loop section.
+	virtual Dictionary _snapshot_det_state(int p_parts = 0x3) { return Dictionary(); }
+	virtual Error _restore_det_state(const Dictionary &p_state) { return p_state.is_empty() ? OK : ERR_UNAVAILABLE; }
+
 	virtual ~MainLoop() {}
 };

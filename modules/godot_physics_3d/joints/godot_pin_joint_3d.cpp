@@ -166,6 +166,27 @@ real_t GodotPinJoint3D::get_param(PS3DE::PinJointParam p_param) const {
 	return 0;
 }
 
+Dictionary GodotPinJoint3D::_det_export_state() const {
+	Dictionary d;
+	d["pivA"] = m_pivotInA;
+	d["pivB"] = m_pivotInB;
+	d["tau"] = m_tau;
+	d["damping"] = m_damping;
+	d["iclamp"] = m_impulseClamp;
+	d["applied"] = m_appliedImpulse;
+	return d;
+}
+
+Error GodotPinJoint3D::_det_import_state(const Dictionary &d) {
+	m_pivotInA = d["pivA"];
+	m_pivotInB = d["pivB"];
+	m_tau = d["tau"];
+	m_damping = d["damping"];
+	m_impulseClamp = d["iclamp"];
+	m_appliedImpulse = d["applied"];
+	return OK;
+}
+
 GodotPinJoint3D::GodotPinJoint3D(GodotBody3D *p_body_a, const Vector3 &p_pos_a, GodotBody3D *p_body_b, const Vector3 &p_pos_b) :
 		GodotJoint3D(_arr, 2) {
 	A = p_body_a;

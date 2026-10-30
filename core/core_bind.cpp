@@ -2100,6 +2100,25 @@ bool Engine::is_printing_error_messages() const {
 	return ::Engine::get_singleton()->is_printing_error_messages();
 }
 
+// YGIAH (det-snapshot)
+void Engine::step(int p_steps) {
+	ERR_FAIL_COND_MSG(p_steps < 0, "Engine.step() requires a non-negative step count.");
+	::Engine::get_singleton()->queue_physics_steps(p_steps);
+}
+
+Dictionary Engine::snapshot_state(int p_parts) const {
+	return ::Engine::get_singleton()->snapshot_state(p_parts);
+}
+
+Error Engine::restore_state(const Dictionary &p_state) {
+	return ::Engine::get_singleton()->restore_state(p_state);
+}
+
+void Engine::object_claim_instance_id(Object *p_object, int64_t p_id) {
+	ERR_FAIL_NULL(p_object);
+	ObjectDB::claim_instance_id(p_object, ObjectID((uint64_t)p_id));
+}
+
 #ifdef TOOLS_ENABLED
 void Engine::get_argument_options(const StringName &p_function, int p_idx, List<String> *r_options) const {
 	const String pf = p_function;
@@ -2167,6 +2186,12 @@ void Engine::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_print_error_messages", "enabled"), &Engine::set_print_error_messages);
 	ClassDB::bind_method(D_METHOD("is_printing_error_messages"), &Engine::is_printing_error_messages);
+
+	// YGIAH (det-snapshot)
+	ClassDB::bind_method(D_METHOD("step", "steps"), &Engine::step);
+	ClassDB::bind_method(D_METHOD("snapshot_state", "parts"), &Engine::snapshot_state, DEFVAL(0xF));
+	ClassDB::bind_method(D_METHOD("restore_state", "state"), &Engine::restore_state);
+	ClassDB::bind_method(D_METHOD("object_claim_instance_id", "object", "instance_id"), &Engine::object_claim_instance_id);
 
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "print_error_messages"), "set_print_error_messages", "is_printing_error_messages");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "print_to_stdout"), "set_print_to_stdout", "is_printing_to_stdout");

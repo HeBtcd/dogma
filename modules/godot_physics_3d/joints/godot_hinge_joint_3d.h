@@ -108,6 +108,10 @@ public:
 	void set_flag(PS3DE::HingeJointFlag p_flag, bool p_value);
 	bool get_flag(PS3DE::HingeJointFlag p_flag) const;
 
+	// YGIAH (det-snapshot): anchor frames + limit/motor accumulators.
+	virtual Dictionary _det_export_state() const override;
+	virtual Error _det_import_state(const Dictionary &d) override;
+
 	GodotHingeJoint3D(GodotBody3D *rbA, GodotBody3D *rbB, const Transform3D &frameA, const Transform3D &frameB);
 	GodotHingeJoint3D(GodotBody3D *rbA, GodotBody3D *rbB, const Vector3 &pivotInA, const Vector3 &pivotInB, const Vector3 &axisInA, const Vector3 &axisInB);
 };
