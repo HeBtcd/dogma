@@ -492,6 +492,76 @@ public:
 		abb.to(r_aabb);
 	}
 
+	// YGIAH (det-snapshot): snapshot restore needs the exact pairing AABB —
+	// its margin encodes hysteresis (pair count at move time), which move()
+	// cannot reproduce. Sets the leaf verbatim (+refit), keeps the expanded
+	// pairing box in sync, and re-queues the item for the next collision
+	// check so the pair set re-derives from the restored boxes.
+	void det_set_pair_aabb(uint32_t p_handle, const BOUNDS &p_aabb) {
+		BVHHandle h;
+		h.set(p_handle);
+		BVHABB_CLASS abb;
+		abb.from(p_aabb);
+		tree.item_set_AABB_verbatim(h, abb);
+#ifdef BVH_EXPAND_LEAF_AABBS
+		tree._pairs[h.id()].expanded_aabb = p_aabb;
+#endif
+		det_mark_changed(p_handle);
+	}
+
+	void det_mark_changed(uint32_t p_handle) {
+		BVHHandle h;
+		h.set(p_handle);
+		uint32_t &last_updated_tick = tree._extra[h.id()].last_updated_tick;
+		if (last_updated_tick == _tick) {
+			return;
+		}
+		last_updated_tick = _tick;
+		changed_items.push_back(h);
+	}
+
+	// YGIAH (det-snapshot): scene reconstruction creates spurious pairs while
+	// shapes sit at the origin before their transforms are restored. Those
+	// pairs survive the next collision check whenever the fat AABBs still
+	// overlap (e.g. a world-spanning floor), pollute scale_expansion_margin()
+	// via num_pairs, and merge solver islands — breaking determinism.
+	// det_for_each_pair enumerates live pairs (each once, lower id first) so
+	// the caller can det_unpair() everything not present in the snapshot.
+	struct DetPairEntry {
+		uint32_t id_a;
+		uint32_t id_b;
+		void *userdata = nullptr;
+	};
+	void det_for_each_pair(LocalVector<DetPairEntry> &r_pairs) {
+		uint32_t ref_count = tree._refs.reserved_size();
+		for (uint32_t i = 0; i < ref_count; i++) {
+			if (!tree._refs[i].is_active()) {
+				continue;
+			}
+			const typename BVHTREE_CLASS::ItemPairs &p = tree._pairs[i];
+			for (int n = 0; n < p.num_pairs; n++) {
+				const typename BVHTREE_CLASS::ItemPairs::Link &link = p.extended_pairs[n];
+				if (link.handle.id() <= i) {
+					continue; // emit each unordered pair once
+				}
+				DetPairEntry e;
+				e.id_a = i;
+				e.id_b = link.handle.id();
+				e.userdata = link.userdata;
+				r_pairs.push_back(e);
+			}
+		}
+	}
+
+	// Break one live pair (unpair both directions + callbacks). Used to prune
+	// the pair set down to the snapshot's captured membership.
+	void det_unpair(uint32_t p_from, uint32_t p_to) {
+		BVHHandle h_from, h_to;
+		h_from.set(p_from);
+		h_to.set(p_to);
+		_unpair(h_from, h_to);
+	}
+
 private:
 	// supplemental funcs
 	uint32_t item_get_tree_id(BVHHandle p_handle) const { return _get_extra(p_handle).tree_id; }

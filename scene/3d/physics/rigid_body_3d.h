@@ -244,6 +244,9 @@ public:
 
 	virtual PackedStringArray get_configuration_warnings() const override;
 
+	virtual Dictionary _det_capture_state() const override;
+	virtual void _det_restore_state(const Dictionary &p_state) override;
+
 	RigidBody3D();
 	~RigidBody3D();
 

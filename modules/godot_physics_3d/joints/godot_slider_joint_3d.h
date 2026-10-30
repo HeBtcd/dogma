@@ -220,6 +220,10 @@ public:
 	real_t getMaxAngMotorForce() { return m_maxAngMotorForce; }
 	real_t getLinearPos() { return m_linPos; }
 
+	// YGIAH (det-snapshot): frames frozen at joint_make + limit/motor state.
+	virtual Dictionary _det_export_state() const override;
+	virtual Error _det_import_state(const Dictionary &d) override;
+
 	// access for ODE solver
 	bool getSolveLinLimit() { return m_solveLinLim; }
 	real_t getLinDepth() { return m_depth[0]; }

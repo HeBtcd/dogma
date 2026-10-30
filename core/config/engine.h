@@ -86,6 +86,23 @@ private:
 	uint64_t _process_frames = 0;
 	bool _in_physics = false;
 
+	// YGIAH (det-snapshot): manual physics-step queue fed by Engine.step(n).
+	// Consumed by Main::iteration() so extra physics steps run inside the
+	// current iteration without triggering an additional render.
+	int64_t _manual_physics_steps = 0;
+
+public:
+	_FORCE_INLINE_ void queue_physics_steps(int64_t p_steps) {
+		_manual_physics_steps += p_steps;
+	}
+	_FORCE_INLINE_ int64_t _take_manual_physics_steps() {
+		int64_t ret = _manual_physics_steps;
+		_manual_physics_steps = 0;
+		return ret;
+	}
+
+private:
+
 	List<Singleton> singletons;
 	HashMap<StringName, Object *> singleton_ptrs;
 
@@ -158,6 +175,13 @@ public:
 
 	void set_frame_delay(uint32_t p_msec);
 	uint32_t get_frame_delay() const;
+
+	// YGIAH (det-snapshot): engine-internal deterministic state snapshot.
+	// Covers default RNG, frame counters, ObjectDB allocator state, pending
+	// MessageQueue contents and delegates to the MainLoop for scene-level
+	// state. See godot-verify/PATCH_SNAPSHOT.md for the coverage list.
+	Dictionary snapshot_state(int p_parts = 0xF) const;
+	Error restore_state(const Dictionary &p_state);
 
 	void add_singleton(const Singleton &p_singleton);
 	void get_singletons(List<Singleton> *p_singletons);

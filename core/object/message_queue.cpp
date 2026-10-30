@@ -484,6 +484,86 @@ CallQueue::~CallQueue() {
 
 //////////////////////
 
+// YGIAH (det-snapshot)
+Array CallQueue::snapshot_pending() const {
+	Array out;
+	Mutex &m = const_cast<Mutex &>(mutex);
+	if (this != MessageQueue::thread_singleton) {
+		m.lock();
+	}
+	for (uint32_t pi = 0; pi < pages_used; pi++) {
+		uint32_t offset = 0;
+		const uint32_t limit = page_bytes[pi];
+		while (offset < limit) {
+			const Message *msg = (const Message *)&pages[pi]->data[offset];
+			const int16_t type = msg->type & FLAG_MASK;
+			uint32_t advance = sizeof(Message);
+			Dictionary d;
+			d["type"] = type;
+			d["flags"] = msg->type & ~FLAG_MASK;
+			const Callable &c = msg->callable;
+			if (c.is_custom()) {
+				d["custom"] = true;
+				WARN_PRINT("MessageQueue::snapshot_pending: custom callable cannot be serialized.");
+			} else {
+				d["object_id"] = (int64_t)(uint64_t)c.get_object_id();
+				d["method"] = c.get_method();
+			}
+			if (type == TYPE_NOTIFICATION) {
+				d["notification"] = msg->notification;
+			} else if (type == TYPE_SET) {
+				const Variant *v = (const Variant *)(msg + 1);
+				d["value"] = *v;
+				advance += sizeof(Variant);
+			} else {
+				Array args;
+				const Variant *v = (const Variant *)(msg + 1);
+				for (int16_t i = 0; i < msg->args; i++) {
+					args.push_back(v[i]);
+				}
+				d["args"] = args;
+				advance += sizeof(Variant) * msg->args;
+			}
+			out.push_back(d);
+			offset += advance;
+		}
+	}
+	if (this != MessageQueue::thread_singleton) {
+		m.unlock();
+	}
+	return out;
+}
+
+Error CallQueue::restore_pending(const Array &p_messages) {
+	for (int i = 0; i < p_messages.size(); i++) {
+		Dictionary d = p_messages[i];
+		if (d.get("custom", false)) {
+			WARN_PRINT("MessageQueue::restore_pending: skipping unserializable custom callable message.");
+			continue;
+		}
+		const int16_t type = (int16_t)(int)d["type"];
+		const bool show_error = ((int)d["flags"] & FLAG_SHOW_ERROR) != 0;
+		ObjectID oid = ObjectID((uint64_t)(int64_t)d["object_id"]);
+		if (type == TYPE_NOTIFICATION) {
+			push_notification(oid, (int)d["notification"]);
+		} else if (type == TYPE_SET) {
+			push_set(oid, d["method"], d["value"]);
+		} else if (type == TYPE_CALL) {
+			Array args = d.get("args", Array());
+			Vector<Variant> argv;
+			Vector<const Variant *> argptrs;
+			argv.resize(args.size());
+			argptrs.resize(args.size());
+			for (int a = 0; a < args.size(); a++) {
+				argv.write[a] = args[a];
+				argptrs.write[a] = &argv[a];
+			}
+			push_callablep(Callable(oid, d["method"]), argptrs.ptrw(), args.size(), show_error);
+		}
+	}
+	return OK;
+}
+
 CallQueue *MessageQueue::main_singleton = nullptr;
 thread_local CallQueue *MessageQueue::thread_singleton = nullptr;
 

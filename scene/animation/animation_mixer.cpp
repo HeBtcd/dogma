@@ -2634,3 +2634,143 @@ AnimationMixer::TrackCache *AnimatedValuesBackup::get_cache_copy(AnimationMixer:
 	}
 	return nullptr;
 }
+
+/* --------- YGIAH (det-snapshot) --------- */
+// The visible API cannot reach these fields: per-instance PlaybackInfo,
+// root-motion accumulators, capture cache and the processing flag. Caches
+// keyed by pointer/object-id (track caches, blend caches) are intentionally
+// dropped and rebuilt so restored continuation matches a live run.
+
+static Dictionary _det_serialize_playback_info(const AnimationMixer::PlaybackInfo &pi) {
+	Dictionary d;
+	d["time"] = pi.time;
+	d["delta"] = pi.delta;
+	d["start"] = pi.start;
+	d["end"] = pi.end;
+	d["seeked"] = pi.seeked;
+	d["is_external_seeking"] = pi.is_external_seeking;
+	d["looped_flag"] = (int)pi.looped_flag;
+	d["weight"] = pi.weight;
+	if (pi.track_weights != nullptr) {
+		PackedFloat64Array tw;
+		for (uint32_t i = 0; i < pi.track_weights->size(); i++) {
+			tw.push_back((*pi.track_weights)[i]);
+		}
+		d["track_weights"] = tw;
+	}
+	return d;
+}
+
+static AnimationMixer::PlaybackInfo _det_deserialize_playback_info(const Dictionary &d) {
+	AnimationMixer::PlaybackInfo pi;
+	pi.time = d["time"];
+	pi.delta = d["delta"];
+	pi.start = d["start"];
+	pi.end = d["end"];
+	pi.seeked = d["seeked"];
+	pi.is_external_seeking = d["is_external_seeking"];
+	pi.looped_flag = (Animation::LoopedFlag)(int)d["looped_flag"];
+	pi.weight = d["weight"];
+	// track_weights: only non-null when the mixer is driven by AnimationTree;
+	// not serializable through this path (documented gap).
+	if (d.has("track_weights")) {
+		WARN_PRINT("det-snapshot: AnimationInstance track_weights is an AnimationTree-owned buffer and was not restored.");
+	}
+	return pi;
+}
+
+Dictionary AnimationMixer::_det_capture_state() const {
+	Dictionary d;
+	d["active"] = active;
+	d["processing"] = processing;
+	d["deterministic"] = deterministic;
+	d["callback_mode_process"] = (int)callback_mode_process;
+	d["callback_mode_method"] = (int)callback_mode_method;
+	d["callback_mode_discrete"] = (int)callback_mode_discrete;
+	d["audio_max_polyphony"] = audio_max_polyphony;
+	d["root_node"] = root_node;
+	d["root_motion_track"] = root_motion_track;
+	d["root_motion_local"] = root_motion_local;
+	d["root_motion_position"] = root_motion_position;
+	d["root_motion_rotation"] = root_motion_rotation;
+	d["root_motion_scale"] = root_motion_scale;
+	d["root_motion_position_accumulator"] = root_motion_position_accumulator;
+	d["root_motion_rotation_accumulator"] = root_motion_rotation_accumulator;
+	d["root_motion_scale_accumulator"] = root_motion_scale_accumulator;
+	d["animation_set_update_pass"] = (int64_t)animation_set_update_pass;
+	d["setup_pass"] = (int64_t)setup_pass;
+	d["animation_instance_weight_pass_counter"] = (int64_t)animation_instance_weight_pass_counter;
+	d["track_map_version"] = (int64_t)track_map_version;
+
+	Array instances;
+	for (const AnimationInstance &ai : animation_instances) {
+		Dictionary e;
+		e["name"] = find_animation(ai.animation);
+		e["pi"] = _det_serialize_playback_info(ai.playback_info);
+		instances.push_back(e);
+	}
+	d["animation_instances"] = instances;
+
+	Dictionary cc;
+	if (capture_cache.animation.is_valid()) {
+		cc["anim"] = find_animation(capture_cache.animation);
+	}
+	cc["remain"] = capture_cache.remain;
+	cc["step"] = capture_cache.step;
+	cc["trans_type"] = (int)capture_cache.trans_type;
+	cc["ease_type"] = (int)capture_cache.ease_type;
+	d["capture_cache"] = cc;
+	return d;
+}
+
+void AnimationMixer::_det_restore_state(const Dictionary &d) {
+	active = d.get("active", true);
+	processing = d.get("processing", false);
+	deterministic = d.get("deterministic", false);
+	callback_mode_process = (AnimationCallbackModeProcess)(int)d.get("callback_mode_process", ANIMATION_CALLBACK_MODE_PROCESS_IDLE);
+	callback_mode_method = (AnimationCallbackModeMethod)(int)d.get("callback_mode_method", ANIMATION_CALLBACK_MODE_METHOD_DEFERRED);
+	callback_mode_discrete = (AnimationCallbackModeDiscrete)(int)d.get("callback_mode_discrete", ANIMATION_CALLBACK_MODE_DISCRETE_RECESSIVE);
+	audio_max_polyphony = d.get("audio_max_polyphony", 32);
+	root_node = d.get("root_node", NodePath());
+	root_motion_track = d.get("root_motion_track", NodePath());
+	root_motion_local = d.get("root_motion_local", false);
+	root_motion_position = d.get("root_motion_position", Vector3());
+	root_motion_rotation = d.get("root_motion_rotation", Quaternion(0, 0, 0, 1));
+	root_motion_scale = d.get("root_motion_scale", Vector3());
+	root_motion_position_accumulator = d.get("root_motion_position_accumulator", Vector3());
+	root_motion_rotation_accumulator = d.get("root_motion_rotation_accumulator", Quaternion(0, 0, 0, 1));
+	root_motion_scale_accumulator = d.get("root_motion_scale_accumulator", Vector3(1, 1, 1));
+	animation_set_update_pass = (uint64_t)(int64_t)d.get("animation_set_update_pass", 1);
+	setup_pass = (uint64_t)(int64_t)d.get("setup_pass", 1);
+	animation_instance_weight_pass_counter = (uint64_t)(int64_t)d.get("animation_instance_weight_pass_counter", 0);
+	track_map_version = (uint64_t)(int64_t)d.get("track_map_version", 1);
+
+	clear_animation_instances();
+	Array instances = d.get("animation_instances", Array());
+	for (int i = 0; i < instances.size(); i++) {
+		Dictionary e = instances[i];
+		StringName name = e["name"];
+		if (!has_animation(name)) {
+			WARN_PRINT("det-snapshot: animation '" + String(name) + "' missing on restore; skipping instance.");
+			continue;
+		}
+		make_animation_instance(name, _det_deserialize_playback_info(e["pi"]));
+	}
+
+	Dictionary cc = d.get("capture_cache", Dictionary());
+	capture_cache.remain = cc.get("remain", 0.0);
+	capture_cache.step = cc.get("step", 0.0);
+	capture_cache.trans_type = (Tween::TransitionType)(int)cc.get("trans_type", Tween::TRANS_LINEAR);
+	capture_cache.ease_type = (Tween::EaseType)(int)cc.get("ease_type", Tween::EASE_IN);
+	if (cc.has("anim") && has_animation(cc["anim"])) {
+		capture_cache.animation = get_animation(cc["anim"]);
+	} else {
+		capture_cache.animation.unref();
+	}
+
+	// Caches reference live objects by pointer/ObjectID; force a rebuild so
+	// they rebind to the restored tree exactly as they did on first build.
+	cache_valid = false;
+	// Re-arm internal processing exactly as _set_process() would.
+	_set_process(processing, true);
+}

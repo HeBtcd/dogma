@@ -838,3 +838,58 @@ RigidBody3D::RigidBody3D() :
 RigidBody3D::~RigidBody3D() {
 	memdelete(contact_monitor);
 }
+
+// YGIAH (det-snapshot): node-side rigid-body fields. The physics-space import
+// restores server state; these are the node's own mirrors and flags.
+Dictionary RigidBody3D::_det_capture_state() const {
+	Dictionary d = Node3D::_det_capture_state();
+	d["can_sleep"] = can_sleep;
+	d["lock_rotation"] = lock_rotation;
+	d["freeze"] = freeze;
+	d["freeze_mode"] = (int)freeze_mode;
+	d["mass"] = mass;
+	d["inertia"] = inertia;
+	d["center_of_mass_mode"] = (int)center_of_mass_mode;
+	d["center_of_mass"] = center_of_mass;
+	d["linear_velocity"] = linear_velocity;
+	d["angular_velocity"] = angular_velocity;
+	d["inverse_inertia_tensor"] = inverse_inertia_tensor;
+	d["gravity_scale"] = gravity_scale;
+	d["linear_damp_mode"] = (int)linear_damp_mode;
+	d["angular_damp_mode"] = (int)angular_damp_mode;
+	d["linear_damp"] = linear_damp;
+	d["angular_damp"] = angular_damp;
+	d["sleeping"] = sleeping;
+	d["ccd"] = ccd;
+	d["max_contacts_reported"] = max_contacts_reported;
+	d["contact_count"] = contact_count;
+	d["custom_integrator"] = custom_integrator;
+	return d;
+}
+
+void RigidBody3D::_det_restore_state(const Dictionary &d) {
+	can_sleep = d.get("can_sleep", can_sleep);
+	lock_rotation = d.get("lock_rotation", lock_rotation);
+	set_freeze_enabled(d.get("freeze", freeze));
+	set_freeze_mode((FreezeMode)(int)d.get("freeze_mode", (int)freeze_mode));
+	mass = d.get("mass", mass);
+	inertia = d.get("inertia", inertia);
+	center_of_mass_mode = (CenterOfMassMode)(int)d.get("center_of_mass_mode", (int)center_of_mass_mode);
+	center_of_mass = d.get("center_of_mass", center_of_mass);
+	linear_velocity = d.get("linear_velocity", linear_velocity);
+	angular_velocity = d.get("angular_velocity", angular_velocity);
+	inverse_inertia_tensor = d.get("inverse_inertia_tensor", inverse_inertia_tensor);
+	gravity_scale = d.get("gravity_scale", gravity_scale);
+	linear_damp_mode = (DampMode)(int)d.get("linear_damp_mode", (int)linear_damp_mode);
+	angular_damp_mode = (DampMode)(int)d.get("angular_damp_mode", (int)angular_damp_mode);
+	linear_damp = d.get("linear_damp", linear_damp);
+	angular_damp = d.get("angular_damp", angular_damp);
+	sleeping = d.get("sleeping", sleeping);
+	ccd = d.get("ccd", ccd);
+	max_contacts_reported = d.get("max_contacts_reported", max_contacts_reported);
+	contact_count = d.get("contact_count", contact_count);
+	custom_integrator = d.get("custom_integrator", custom_integrator);
+	// YGIAH: apply the Node3D cache/dirty-mask restore LAST — the body
+	// setters above can touch transforms and would stomp the verbatim mask.
+	Node3D::_det_restore_state(d);
+}

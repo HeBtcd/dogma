@@ -5007,7 +5007,12 @@ bool Main::iteration() {
 #endif // XR_DISABLED
 
 	GodotProfileZoneGrouped(_profile_zone, "physics");
-	for (int iters = 0; iters < advance.physics_steps; ++iters) {
+	// YGIAH (det-snapshot): manual steps queued via Engine.step(n) extend
+	// this iteration's physics loop. Rendering still happens at most once
+	// per iteration, so manual stepping is render-free.
+	bool manual_tails_ran = false;
+	int64_t physics_steps_total = advance.physics_steps + Engine::get_singleton()->_take_manual_physics_steps();
+	for (int64_t iters = 0; iters < physics_steps_total; ++iters) {
 		GodotProfileZone("Physics Step");
 		GodotProfileZoneGroupedFirst(_physics_zone, "setup");
 		if (Input::get_singleton()->is_agile_input_event_flushing()) {
@@ -5090,6 +5095,41 @@ bool Main::iteration() {
 		physics_process_max = MAX(OS::get_singleton()->get_ticks_usec() - physics_begin, physics_process_max);
 
 		Engine::get_singleton()->_in_physics = false;
+
+		// YGIAH (det-snapshot): steps queued during this physics step run in
+		// the same iteration, still before the single render at its end.
+		physics_steps_total += Engine::get_singleton()->_take_manual_physics_steps();
+
+		// YGIAH (det-snapshot): when manual steps extend this iteration, EVERY
+		// physics step — scheduled or manual — must behave as a full virtual
+		// iteration. The baseline trajectory advances idle state (process_time,
+		// idle timers/tweens, IDLE-callback AnimationPlayers, _process_frames)
+		// once per step, paired immediately after each physics step. Running
+		// the tail only for manual steps shifts the pairing by one step and
+		// lets the trailing iteration process() below run a (steps+1)-th time,
+		// which advances every idle-driven node once too many (observed: +1/60
+		// anim/timer drift). The flag suppresses that normal tail for this
+		// iteration. Rendering is still skipped (render-free by design).
+		if (physics_steps_total > advance.physics_steps) {
+			if (OS::get_singleton()->get_main_loop()->process(process_step * time_scale)) {
+				exit = true;
+				break;
+			}
+			message_queue->flush();
+#ifndef NAVIGATION_2D_DISABLED
+			NavigationServer2D::get_singleton()->process(process_step * time_scale);
+#endif // NAVIGATION_2D_DISABLED
+#ifndef NAVIGATION_3D_DISABLED
+			NavigationServer3D::get_singleton()->process(process_step * time_scale);
+#endif // NAVIGATION_3D_DISABLED
+			GDExtensionManager::get_singleton()->frame();
+			for (int i = 0; i < ScriptServer::get_language_count(); i++) {
+				ScriptServer::get_language(i)->frame();
+			}
+			AudioServer::get_singleton()->update();
+			Engine::get_singleton()->_process_frames++;
+			manual_tails_ran = true;
+		}
 	}
 
 	if (Input::get_singleton()->is_agile_input_event_flushing()) {
@@ -5098,20 +5138,25 @@ bool Main::iteration() {
 
 	uint64_t process_begin = OS::get_singleton()->get_ticks_usec();
 
+	// YGIAH (det-snapshot): when manual steps extended the physics loop, each
+	// step already ran its own virtual-iteration tail inside the loop — the
+	// normal tail would advance idle state one extra time.
 	GodotProfileZoneGrouped(_profile_zone, "process");
-	if (OS::get_singleton()->get_main_loop()->process(process_step * time_scale)) {
-		exit = true;
-	}
-	message_queue->flush();
+	if (!manual_tails_ran) {
+		if (OS::get_singleton()->get_main_loop()->process(process_step * time_scale)) {
+			exit = true;
+		}
+		message_queue->flush();
 
 #ifndef NAVIGATION_2D_DISABLED
-	GodotProfileZoneGrouped(_profile_zone, "process 2D navigation");
-	NavigationServer2D::get_singleton()->process(process_step * time_scale);
+		GodotProfileZoneGrouped(_profile_zone, "process 2D navigation");
+		NavigationServer2D::get_singleton()->process(process_step * time_scale);
 #endif // NAVIGATION_2D_DISABLED
 #ifndef NAVIGATION_3D_DISABLED
-	GodotProfileZoneGrouped(_profile_zone, "process 3D navigation");
-	NavigationServer3D::get_singleton()->process(process_step * time_scale);
+		GodotProfileZoneGrouped(_profile_zone, "process 3D navigation");
+		NavigationServer3D::get_singleton()->process(process_step * time_scale);
 #endif // NAVIGATION_3D_DISABLED
+	}
 
 	GodotProfileZoneGrouped(_profile_zone, "RenderingServer::sync");
 	RenderingServer::get_singleton()->sync(); //sync if still drawing from previous frames.

@@ -124,6 +124,10 @@ public:
 	}
 
 	FUNC2(space_set_debug_contacts, RID, int);
+
+	// YGIAH (det-snapshot): main-thread passthroughs, not per-step calls.
+	FUNC1RC(Dictionary, space_export_state, RID);
+	FUNC2R(Error, space_import_state, RID, const Dictionary &);
 	virtual Vector<Vector3> space_get_contacts(RID p_space) const override {
 		ERR_FAIL_COND_V(!Thread::is_main_thread(), Vector<Vector3>());
 		return physics_server_3d->space_get_contacts(p_space);

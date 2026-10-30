@@ -38,6 +38,7 @@
 #include "joints/godot_pin_joint_3d.h"
 #include "joints/godot_slider_joint_3d.h"
 
+#include "core/config/engine.h"
 #include "core/debugger/engine_debugger.h"
 #include "core/os/os.h"
 
@@ -194,6 +195,28 @@ PhysicsDirectSpaceState3D *GodotPhysicsServer3D::space_get_direct_state(RID p_sp
 	ERR_FAIL_COND_V_MSG((using_threads && !doing_sync) || space->is_locked(), nullptr, "Space state is inaccessible right now, wait for iteration or physics process notification.");
 
 	return space->get_direct_state();
+}
+
+// YGIAH (det-snapshot)
+Dictionary GodotPhysicsServer3D::space_export_state(RID p_space) const {
+	GodotSpace3D *space = space_owner.get_or_null(p_space);
+	ERR_FAIL_NULL_V(space, Dictionary());
+	Dictionary d = space->_det_export_state();
+	// The step counter lives on the server-level stepper (shared across
+	// spaces); island_step markers on bodies/constraints compare against it,
+	// so a rebuilt stepper must resume at the captured value or stale markers
+	// would collide once the counter laps.
+	d["step_counter"] = (int64_t)stepper->get_step_counter();
+	return d;
+}
+
+Error GodotPhysicsServer3D::space_import_state(RID p_space, const Dictionary &p_state) {
+	GodotSpace3D *space = space_owner.get_or_null(p_space);
+	ERR_FAIL_NULL_V(space, ERR_INVALID_PARAMETER);
+	if (p_state.has("step_counter")) {
+		stepper->set_step_counter((uint64_t)(int64_t)p_state["step_counter"]);
+	}
+	return space->_det_import_state(p_state);
 }
 
 void GodotPhysicsServer3D::space_set_debug_contacts(RID p_space, int p_max_contacts) {

@@ -138,6 +138,13 @@ public:
 	void clear();
 	void statistics();
 
+	// YGIAH (det-snapshot): serialize pending (unflushed) messages in order.
+	// Custom callables (CallableCustom*) cannot be reconstructed and are
+	// reported with "custom"=true entries; callers must treat them as a
+	// documented coverage gap, not silent data loss.
+	Array snapshot_pending() const;
+	Error restore_pending(const Array &p_messages);
+
 	bool has_messages() const;
 
 	bool is_flushing() const;

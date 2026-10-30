@@ -50,6 +50,26 @@ void Math::randomize() {
 	default_rand.randomize();
 }
 
+// YGIAH (det-snapshot)
+uint64_t Math::get_rand_seed() {
+	return default_rand.get_seed();
+}
+void Math::set_rand_seed(uint64_t p_seed) {
+	default_rand.set_seed_keep_state(p_seed);
+}
+uint64_t Math::get_rand_inc() {
+	return default_rand.get_inc();
+}
+void Math::set_rand_inc(uint64_t p_inc) {
+	default_rand.set_inc(p_inc);
+}
+uint64_t Math::get_rand_state() {
+	return default_rand.get_state();
+}
+void Math::set_rand_state(uint64_t p_state) {
+	default_rand.set_state(p_state);
+}
+
 uint32_t Math::rand() {
 	return default_rand.rand();
 }

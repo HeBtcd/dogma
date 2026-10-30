@@ -55,6 +55,10 @@ private:
 	Type type;
 	RID self;
 	ObjectID instance_id;
+	// YGIAH (det-snapshot): deterministic creation ordinal within the owning
+	// space; used as canonical tie-break for solver/broadphase ordering so
+	// pointer hash order can never leak into solver order.
+	uint64_t det_ordinal = 0;
 	uint32_t collision_layer = 1;
 	uint32_t collision_mask = 1;
 	real_t collision_priority = 1.0;
@@ -108,10 +112,32 @@ public:
 	_FORCE_INLINE_ void set_self(const RID &p_self) { self = p_self; }
 	_FORCE_INLINE_ RID get_self() const { return self; }
 
+	// YGIAH (det-snapshot)
+	_FORCE_INLINE_ void set_det_ordinal(uint64_t p_ord) { det_ordinal = p_ord; }
+	_FORCE_INLINE_ uint64_t get_det_ordinal() const { return det_ordinal; }
+
 	_FORCE_INLINE_ void set_instance_id(const ObjectID &p_instance_id) { instance_id = p_instance_id; }
 	_FORCE_INLINE_ ObjectID get_instance_id() const { return instance_id; }
 
 	void _shape_changed() override;
+
+	// YGIAH (det-snapshot): refresh broadphase AABBs immediately and drop any
+	// queued pending_shape_update_list entry. Snapshot import calls this after
+	// restoring a captured transform: the scene rebuild queues a deferred
+	// _shape_changed() per rebuilt body, and if those flushed at the next
+	// PhysicsServer3D::step() they would run _shapes_changed() ->
+	// wakeup()/wakeup_neighbours(), re-activating bodies that were captured
+	// asleep and diverging the very first post-restore step.
+	// When p_aabbs has one entry per shape, the broadphase AABBs are restored
+	// from it instead of being recomputed: aabb_cache carries a grow margin
+	// accumulated over update history (see _update_shapes' grow_by), so a
+	// rebuilt body's margin-free AABB would change pair formation vs the
+	// captured baseline. p_pair_aabbs likewise restores each broadphase
+	// leaf's pairing AABB verbatim (margin scales with pair count at move
+	// time — unrecoverable hysteresis) and re-queues the item for the next
+	// collision check so the pair set re-derives from the captured boxes.
+	void det_flush_shape_update(const Vector<AABB> &p_aabbs, const Vector<AABB> &p_pair_aabbs);
+	void det_export_shape_pair_aabbs(Vector<AABB> &r_aabbs) const;
 
 	_FORCE_INLINE_ Type get_type() const { return type; }
 	void add_shape(GodotShape3D *p_shape, const Transform3D &p_transform = Transform3D(), bool p_disabled = false);

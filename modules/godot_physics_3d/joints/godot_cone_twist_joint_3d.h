@@ -136,4 +136,8 @@ public:
 
 	void set_param(PS3DE::ConeTwistJointParam p_param, real_t p_value);
 	real_t get_param(PS3DE::ConeTwistJointParam p_param) const;
+
+	// YGIAH (det-snapshot): anchor frames + swing/twist limit accumulators.
+	virtual Dictionary _det_export_state() const override;
+	virtual Error _det_import_state(const Dictionary &d) override;
 };

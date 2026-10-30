@@ -124,6 +124,10 @@ void PhysicsServer3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("space_get_param", "space", "param"), &PhysicsServer3D::space_get_param);
 	ClassDB::bind_method(D_METHOD("space_get_direct_state", "space"), &PhysicsServer3D::space_get_direct_state);
 
+	// YGIAH (det-snapshot)
+	ClassDB::bind_method(D_METHOD("space_export_state", "space"), &PhysicsServer3D::space_export_state);
+	ClassDB::bind_method(D_METHOD("space_import_state", "space", "state"), &PhysicsServer3D::space_import_state);
+
 	ClassDB::bind_method(D_METHOD("area_create"), &PhysicsServer3D::area_create);
 	ClassDB::bind_method(D_METHOD("area_set_space", "area", "space"), &PhysicsServer3D::area_set_space);
 	ClassDB::bind_method(D_METHOD("area_get_space", "area"), &PhysicsServer3D::area_get_space);

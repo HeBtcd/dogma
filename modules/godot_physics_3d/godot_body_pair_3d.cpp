@@ -988,3 +988,110 @@ GodotBodySoftBodyPair3D::~GodotBodySoftBodyPair3D() {
 	body->remove_constraint(this);
 	soft_body->remove_constraint(this);
 }
+
+/* --------- YGIAH (det-snapshot) --------- */
+
+void GodotBodyPair3D::_det_get_key(uint64_t r_key[5]) const {
+	uint64_t ord_a = A->get_det_ordinal();
+	uint64_t ord_b = B->get_det_ordinal();
+	if (ord_a <= ord_b) {
+		r_key[0] = ord_a;
+		r_key[1] = (uint64_t)shape_A;
+		r_key[2] = ord_b;
+		r_key[3] = (uint64_t)shape_B;
+	} else {
+		r_key[0] = ord_b;
+		r_key[1] = (uint64_t)shape_B;
+		r_key[2] = ord_a;
+		r_key[3] = (uint64_t)shape_A;
+	}
+	r_key[4] = _det_kind();
+}
+
+Dictionary GodotBodyPair3D::_det_export_state() const {
+	Dictionary d;
+	// Canonical orientation: A is always the lower ordinal because
+	// GodotSpace3D::_broadphase_pair normalizes by det_ordinal.
+	d["ord_a"] = (int64_t)A->get_det_ordinal();
+	d["sub_a"] = shape_A;
+	d["ord_b"] = (int64_t)B->get_det_ordinal();
+	d["sub_b"] = shape_B;
+	d["collide_A"] = collide_A;
+	d["collide_B"] = collide_B;
+	d["report_contacts_only"] = report_contacts_only;
+	d["offset_B"] = offset_B;
+	d["sep_axis"] = sep_axis;
+	d["collided"] = collided;
+	d["check_ccd"] = check_ccd;
+	d["contact_count"] = contact_count;
+	Array cs;
+	for (int i = 0; i < contact_count; i++) {
+		const Contact &c = contacts[i];
+		Dictionary cd;
+		cd["position"] = c.position;
+		cd["normal"] = c.normal;
+		cd["index_A"] = c.index_A;
+		cd["index_B"] = c.index_B;
+		cd["local_A"] = c.local_A;
+		cd["local_B"] = c.local_B;
+		cd["acc_impulse"] = c.acc_impulse;
+		cd["acc_normal_impulse"] = c.acc_normal_impulse;
+		cd["acc_tangent_impulse"] = c.acc_tangent_impulse;
+		cd["acc_bias_impulse"] = c.acc_bias_impulse;
+		cd["acc_bias_impulse_center_of_mass"] = c.acc_bias_impulse_center_of_mass;
+		cd["mass_normal"] = c.mass_normal;
+		cd["bias"] = c.bias;
+		cd["bounce"] = c.bounce;
+		cd["depth"] = c.depth;
+		cd["active"] = c.active;
+		cd["used"] = c.used;
+		cd["rA"] = c.rA;
+		cd["rB"] = c.rB;
+		cs.push_back(cd);
+	}
+	d["contacts"] = cs;
+	return d;
+}
+
+Error GodotBodyPair3D::_det_import_state(const Dictionary &d) {
+	ERR_FAIL_COND_V(A->get_det_ordinal() != (uint64_t)(int64_t)d["ord_a"] ||
+					B->get_det_ordinal() != (uint64_t)(int64_t)d["ord_b"] ||
+					shape_A != (int)d["sub_a"] || shape_B != (int)d["sub_b"],
+			ERR_INVALID_DATA);
+	collide_A = d["collide_A"];
+	collide_B = d["collide_B"];
+	report_contacts_only = d["report_contacts_only"];
+	offset_B = d["offset_B"];
+	sep_axis = d["sep_axis"];
+	collided = d["collided"];
+	check_ccd = d["check_ccd"];
+	contact_count = MIN((int)d["contact_count"], (int)MAX_CONTACTS);
+	Array cs = d["contacts"];
+	for (int i = 0; i < cs.size() && i < (int)MAX_CONTACTS; i++) {
+		Dictionary cd = cs[i];
+		Contact &c = contacts[i];
+		c.position = cd["position"];
+		c.normal = cd["normal"];
+		c.index_A = cd["index_A"];
+		c.index_B = cd["index_B"];
+		c.local_A = cd["local_A"];
+		c.local_B = cd["local_B"];
+		c.acc_impulse = cd["acc_impulse"];
+		c.acc_normal_impulse = cd["acc_normal_impulse"];
+		c.acc_tangent_impulse = cd["acc_tangent_impulse"];
+		c.acc_bias_impulse = cd["acc_bias_impulse"];
+		c.acc_bias_impulse_center_of_mass = cd["acc_bias_impulse_center_of_mass"];
+		c.mass_normal = cd["mass_normal"];
+		c.bias = cd["bias"];
+		c.bounce = cd["bounce"];
+		c.depth = cd["depth"];
+		c.active = cd["active"];
+		c.used = cd["used"];
+		c.rA = cd["rA"];
+		c.rB = cd["rB"];
+	}
+	for (int i = cs.size(); i < contact_count; i++) {
+		contacts[i] = Contact();
+	}
+	return OK;
+}

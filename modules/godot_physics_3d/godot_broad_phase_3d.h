@@ -31,6 +31,7 @@
 #pragma once
 
 #include "core/math/aabb.h"
+#include "core/templates/local_vector.h"
 
 class GodotCollisionObject3D;
 
@@ -63,6 +64,26 @@ public:
 	virtual void set_unpair_callback(UnpairCallback p_unpair_callback, void *p_userdata) = 0;
 
 	virtual void update() = 0;
+
+	// YGIAH (det-snapshot): pairing-state inspection/repair. The pairing
+	// AABB carries history-dependent hysteresis (margin scales with pair
+	// count at move time), so snapshot import restores it verbatim and
+	// re-queues every item for the next collision check instead of relying
+	// on move() re-detection.
+	virtual AABB det_get_item_aabb(ID p_id) { return AABB(); }
+	virtual void det_set_pair_aabb(ID p_id, const AABB &p_aabb) {}
+	virtual void det_mark_changed(ID p_id) {}
+
+	// Pair-set pruning: enumerate live pairs (each once) and unpair entries
+	// the snapshot says must not exist. Rebuild-time spurious pairs otherwise
+	// leak into num_pairs -> expansion margins and island merging.
+	struct DetPairEntry {
+		ID id_a = 0;
+		ID id_b = 0;
+		void *userdata = nullptr;
+	};
+	virtual void det_for_each_pair(LocalVector<DetPairEntry> &r_pairs) {}
+	virtual void det_unpair(ID p_a, ID p_b) {}
 
 	virtual ~GodotBroadPhase3D() {}
 };

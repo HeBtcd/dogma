@@ -87,6 +87,12 @@ public:
 	Vector3 get_position_a() { return m_pivotInA; }
 	Vector3 get_position_b() { return m_pivotInB; }
 
+	// YGIAH (det-snapshot): m_pivotInA/B are frozen at joint_make time in
+	// each body's local frame. A rebuilt joint recomputes them against
+	// then-current body transforms, so they must round-trip verbatim.
+	virtual Dictionary _det_export_state() const override;
+	virtual Error _det_import_state(const Dictionary &d) override;
+
 	GodotPinJoint3D(GodotBody3D *p_body_a, const Vector3 &p_pos_a, GodotBody3D *p_body_b, const Vector3 &p_pos_b);
 	~GodotPinJoint3D();
 };

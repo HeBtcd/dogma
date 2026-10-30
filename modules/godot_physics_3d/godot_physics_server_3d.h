@@ -112,6 +112,10 @@ public:
 	// this function only works on physics process, errors and returns null otherwise
 	virtual PhysicsDirectSpaceState3D *space_get_direct_state(RID p_space) override;
 
+	// YGIAH (det-snapshot)
+	virtual Dictionary space_export_state(RID p_space) const override;
+	virtual Error space_import_state(RID p_space, const Dictionary &p_state) override;
+
 	virtual void space_set_debug_contacts(RID p_space, int p_max_contacts) override;
 	virtual Vector<Vector3> space_get_contacts(RID p_space) const override;
 	virtual int space_get_contact_count(RID p_space) const override;

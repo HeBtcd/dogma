@@ -55,6 +55,84 @@ April 04, 2008
 
 #include "godot_slider_joint_3d.h"
 
+// YGIAH (det-snapshot): frames frozen at joint_make + limit/motor state.
+Dictionary GodotSliderJoint3D::_det_export_state() const {
+	Dictionary d;
+	d["fA"] = m_frameInA;
+	d["fB"] = m_frameInB;
+	d["llin"] = m_lowerLinLimit;
+	d["ulin"] = m_upperLinLimit;
+	d["lang"] = m_lowerAngLimit;
+	d["uang"] = m_upperAngLimit;
+	d["sdl"] = m_softnessDirLin;
+	d["rdl"] = m_restitutionDirLin;
+	d["ddl"] = m_dampingDirLin;
+	d["sda"] = m_softnessDirAng;
+	d["rda"] = m_restitutionDirAng;
+	d["dda"] = m_dampingDirAng;
+	d["sll"] = m_softnessLimLin;
+	d["rll"] = m_restitutionLimLin;
+	d["dll"] = m_dampingLimLin;
+	d["sla"] = m_softnessLimAng;
+	d["rla"] = m_restitutionLimAng;
+	d["dla"] = m_dampingLimAng;
+	d["sol"] = m_softnessOrthoLin;
+	d["rol"] = m_restitutionOrthoLin;
+	d["dol"] = m_dampingOrthoLin;
+	d["soa"] = m_softnessOrthoAng;
+	d["roa"] = m_restitutionOrthoAng;
+	d["doa"] = m_dampingOrthoAng;
+	d["svll"] = m_solveLinLim;
+	d["sval"] = m_solveAngLim;
+	d["plm"] = m_poweredLinMotor;
+	d["tlmv"] = m_targetLinMotorVelocity;
+	d["mlmf"] = m_maxLinMotorForce;
+	d["aclmi"] = m_accumulatedLinMotorImpulse;
+	d["pam"] = m_poweredAngMotor;
+	d["tamv"] = m_targetAngMotorVelocity;
+	d["mamf"] = m_maxAngMotorForce;
+	d["acami"] = m_accumulatedAngMotorImpulse;
+	return d;
+}
+
+Error GodotSliderJoint3D::_det_import_state(const Dictionary &d) {
+	m_frameInA = d["fA"];
+	m_frameInB = d["fB"];
+	m_lowerLinLimit = d["llin"];
+	m_upperLinLimit = d["ulin"];
+	m_lowerAngLimit = d["lang"];
+	m_upperAngLimit = d["uang"];
+	m_softnessDirLin = d["sdl"];
+	m_restitutionDirLin = d["rdl"];
+	m_dampingDirLin = d["ddl"];
+	m_softnessDirAng = d["sda"];
+	m_restitutionDirAng = d["rda"];
+	m_dampingDirAng = d["dda"];
+	m_softnessLimLin = d["sll"];
+	m_restitutionLimLin = d["rll"];
+	m_dampingLimLin = d["dll"];
+	m_softnessLimAng = d["sla"];
+	m_restitutionLimAng = d["rla"];
+	m_dampingLimAng = d["dla"];
+	m_softnessOrthoLin = d["sol"];
+	m_restitutionOrthoLin = d["rol"];
+	m_dampingOrthoLin = d["dol"];
+	m_softnessOrthoAng = d["soa"];
+	m_restitutionOrthoAng = d["roa"];
+	m_dampingOrthoAng = d["doa"];
+	m_solveLinLim = d["svll"];
+	m_solveAngLim = d["sval"];
+	m_poweredLinMotor = d["plm"];
+	m_targetLinMotorVelocity = d["tlmv"];
+	m_maxLinMotorForce = d["mlmf"];
+	m_accumulatedLinMotorImpulse = d["aclmi"];
+	m_poweredAngMotor = d["pam"];
+	m_targetAngMotorVelocity = d["tamv"];
+	m_maxAngMotorForce = d["mamf"];
+	m_accumulatedAngMotorImpulse = d["acami"];
+	return OK;
+}
+
 //-----------------------------------------------------------------------------
 
 GodotSliderJoint3D::GodotSliderJoint3D(GodotBody3D *rbA, GodotBody3D *rbB, const Transform3D &frameInA, const Transform3D &frameInB) :

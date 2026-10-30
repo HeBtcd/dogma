@@ -281,6 +281,10 @@ public:
 		return &m_linearLimits;
 	}
 
+	// YGIAH (det-snapshot): frames frozen at joint_make + limit/motor state.
+	virtual Dictionary _det_export_state() const override;
+	virtual Error _det_import_state(const Dictionary &d) override;
+
 	// First 3 are linear, next 3 are angular.
 	void setLimit(int axis, real_t lo, real_t hi) {
 		if (axis < 3) {

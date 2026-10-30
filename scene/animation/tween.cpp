@@ -719,7 +719,9 @@ PropertyTweener::PropertyTweener(const Object *p_target, const Vector<StringName
 }
 
 PropertyTweener::PropertyTweener() {
-	ERR_FAIL_MSG("PropertyTweener can't be created directly. Use the tween_property() method in Tween.");
+	if (!det_restore_in_progress) {
+		ERR_FAIL_MSG("PropertyTweener can't be created directly. Use the tween_property() method in Tween.");
+	}
 }
 
 bool IntervalTweener::step(double &r_delta) {
@@ -744,7 +746,9 @@ IntervalTweener::IntervalTweener(double p_time) {
 }
 
 IntervalTweener::IntervalTweener() {
-	ERR_FAIL_MSG("IntervalTweener can't be created directly. Use the tween_interval() method in Tween.");
+	if (!det_restore_in_progress) {
+		ERR_FAIL_MSG("IntervalTweener can't be created directly. Use the tween_interval() method in Tween.");
+	}
 }
 
 RequiredResult<CallbackTweener> CallbackTweener::set_delay(double p_delay) {
@@ -794,7 +798,9 @@ CallbackTweener::CallbackTweener(const Callable &p_callback) {
 }
 
 CallbackTweener::CallbackTweener() {
-	ERR_FAIL_MSG("CallbackTweener can't be created directly. Use the tween_callback() method in Tween.");
+	if (!det_restore_in_progress) {
+		ERR_FAIL_MSG("CallbackTweener can't be created directly. Use the tween_callback() method in Tween.");
+	}
 }
 
 RequiredResult<MethodTweener> MethodTweener::set_delay(double p_delay) {
@@ -888,7 +894,9 @@ MethodTweener::MethodTweener(const Callable &p_callback, const Variant &p_from, 
 }
 
 MethodTweener::MethodTweener() {
-	ERR_FAIL_MSG("MethodTweener can't be created directly. Use the tween_method() method in Tween.");
+	if (!det_restore_in_progress) {
+		ERR_FAIL_MSG("MethodTweener can't be created directly. Use the tween_method() method in Tween.");
+	}
 }
 
 void SubtweenTweener::start() {
@@ -942,7 +950,9 @@ SubtweenTweener::SubtweenTweener(const Ref<Tween> &p_subtween) {
 }
 
 SubtweenTweener::SubtweenTweener() {
-	ERR_FAIL_MSG("SubtweenTweener can't be created directly. Use the tween_subtween() method in Tween.");
+	if (!det_restore_in_progress) {
+		ERR_FAIL_MSG("SubtweenTweener can't be created directly. Use the tween_subtween() method in Tween.");
+	}
 }
 
 Ref<AwaitTweener> AwaitTweener::set_timeout(double p_timeout) {
@@ -993,7 +1003,9 @@ AwaitTweener::AwaitTweener(const Signal &p_signal) {
 }
 
 AwaitTweener::AwaitTweener() {
-	ERR_FAIL_MSG("AwaitTweener can't be created directly. Use the tween_await() method in Tween.");
+	if (!det_restore_in_progress) {
+		ERR_FAIL_MSG("AwaitTweener can't be created directly. Use the tween_await() method in Tween.");
+	}
 }
 
 void AwaitTweener::_bind_methods() {
@@ -1003,4 +1015,319 @@ void AwaitTweener::_bind_methods() {
 
 void AwaitTweener::_signal_received(const Variant **p_args, int p_argcount, Callable::CallError &r_error) {
 	received = true;
+}
+
+/* --------- YGIAH (det-snapshot) --------- */
+
+bool Tweener::det_restore_in_progress = false;
+
+static Dictionary _det_serialize_callable(const Callable &p_c) {
+	Dictionary d;
+	if (!p_c.is_valid()) {
+		d["null"] = true;
+		return d;
+	}
+	ObjectID oid = p_c.get_object_id();
+	if (p_c.is_custom() && oid.is_null()) {
+		// Function-pointer/lambda callables cannot be reconstructed.
+		d["unsupported"] = true;
+		WARN_PRINT("det-snapshot: custom callable without object target cannot be serialized.");
+		return d;
+	}
+	d["oid"] = (int64_t)(uint64_t)oid;
+	d["method"] = p_c.get_method();
+	if (p_c.get_bound_arguments_count() > 0) {
+		d["binds"] = p_c.get_bound_arguments();
+	}
+	return d;
+}
+
+static Callable _det_deserialize_callable(const Dictionary &d) {
+	if (d.get("null", false) || d.get("unsupported", false)) {
+		return Callable();
+	}
+	Callable c(ObjectID((uint64_t)(int64_t)d["oid"]), d["method"]);
+	if (d.has("binds")) {
+		c = c.bindv(d["binds"]);
+	}
+	return c;
+}
+
+String Tweener::_det_type() const {
+	return String(get_class());
+}
+
+Dictionary Tween::_det_capture() const {
+	Dictionary d;
+	d["iid"] = (int64_t)(uint64_t)get_instance_id();
+	d["process_mode"] = (int)process_mode;
+	d["pause_mode"] = (int)pause_mode;
+	d["default_transition"] = (int)default_transition;
+	d["default_ease"] = (int)default_ease;
+	d["bound_node"] = (int64_t)(uint64_t)bound_node;
+	d["is_bound"] = is_bound;
+	d["total_time"] = total_time;
+	d["current_step"] = current_step;
+	d["loops"] = loops;
+	d["loops_done"] = loops_done;
+	d["speed_scale"] = speed_scale;
+	d["ignore_time_scale"] = ignore_time_scale;
+	d["started"] = started;
+	d["running"] = running;
+	d["dead"] = dead;
+	d["valid"] = valid;
+	d["default_parallel"] = default_parallel;
+	d["parallel_enabled"] = parallel_enabled;
+
+	Array steps;
+	for (uint32_t s = 0; s < tweeners.size(); s++) {
+		Array step_list;
+		for (const Ref<Tweener> &tw : tweeners[s]) {
+			Dictionary td = tw->_det_capture();
+			td["type"] = tw->_det_type();
+			td["iid"] = (int64_t)(uint64_t)tw->get_instance_id();
+			td["elapsed"] = tw->elapsed_time;
+			td["finished"] = tw->finished;
+			step_list.push_back(td);
+		}
+		steps.push_back(step_list);
+	}
+	d["tweeners"] = steps;
+
+	Array subs;
+	for (const Ref<Tween> &st : subtweens) {
+		subs.push_back(st->_det_capture());
+	}
+	d["subtweens"] = subs;
+	return d;
+}
+
+Error Tween::_det_restore(const Dictionary &d) {
+	process_mode = (TweenProcessMode)(int)d["process_mode"];
+	pause_mode = (TweenPauseMode)(int)d["pause_mode"];
+	default_transition = (TransitionType)(int)d["default_transition"];
+	default_ease = (EaseType)(int)d["default_ease"];
+	bound_node = ObjectID((uint64_t)(int64_t)d["bound_node"]);
+	is_bound = d["is_bound"];
+	total_time = d["total_time"];
+	current_step = d["current_step"];
+	loops = d["loops"];
+	loops_done = d["loops_done"];
+	speed_scale = d["speed_scale"];
+	ignore_time_scale = d["ignore_time_scale"];
+	started = d["started"];
+	running = d["running"];
+	dead = d["dead"];
+	valid = d["valid"];
+	default_parallel = d["default_parallel"];
+	parallel_enabled = d["parallel_enabled"];
+	in_step = false;
+
+	tweeners.clear();
+	Array steps = d["tweeners"];
+	tweeners.resize(steps.size());
+	for (int s = 0; s < steps.size(); s++) {
+		Array step_list = steps[s];
+		for (int i = 0; i < step_list.size(); i++) {
+			Dictionary td = step_list[i];
+			String type = td["type"];
+			Ref<Tweener> tw;
+			Tweener::det_restore_in_progress = true;
+			if (type == "PropertyTweener") {
+				Ref<PropertyTweener> t;
+				t.instantiate();
+				tw = t;
+			} else if (type == "IntervalTweener") {
+				Ref<IntervalTweener> t;
+				t.instantiate();
+				tw = t;
+			} else if (type == "CallbackTweener") {
+				Ref<CallbackTweener> t;
+				t.instantiate();
+				tw = t;
+			} else if (type == "MethodTweener") {
+				Ref<MethodTweener> t;
+				t.instantiate();
+				tw = t;
+			} else if (type == "SubtweenTweener") {
+				Ref<SubtweenTweener> t;
+				t.instantiate();
+				tw = t;
+			} else if (type == "AwaitTweener") {
+				Ref<AwaitTweener> t;
+				t.instantiate();
+				tw = t;
+			} else {
+				Tweener::det_restore_in_progress = false;
+				ERR_FAIL_V_MSG(ERR_INVALID_DATA, "det-snapshot: unknown tweener type " + type);
+			}
+			Tweener::det_restore_in_progress = false;
+			// Reclaim the original ObjectID before any further allocation.
+			ObjectDB::claim_instance_id(tw.ptr(), ObjectID((uint64_t)(int64_t)td["iid"]));
+			tw->set_tween(this);
+			tw->elapsed_time = td["elapsed"];
+			tw->finished = td["finished"];
+			tw->_det_restore(td);
+			tweeners[s].push_back(tw);
+		}
+	}
+
+	subtweens.clear();
+	Array subs = d["subtweens"];
+	for (int i = 0; i < subs.size(); i++) {
+		Dictionary sd = subs[i];
+		Ref<Tween> st = memnew(Tween(parent_tree));
+		ObjectDB::claim_instance_id(st.ptr(), ObjectID((uint64_t)(int64_t)sd["iid"]));
+		st->_det_restore(sd);
+		subtweens.push_back(st);
+	}
+	return OK;
+}
+
+Dictionary PropertyTweener::_det_capture() const {
+	Dictionary d;
+	d["target"] = (int64_t)(uint64_t)target;
+	Array prop;
+	for (const StringName &p : property) {
+		prop.push_back(p);
+	}
+	d["property"] = prop;
+	d["initial_val"] = initial_val;
+	d["base_final_val"] = base_final_val;
+	d["final_val"] = final_val;
+	d["delta_val"] = delta_val;
+	d["duration"] = duration;
+	d["trans_type"] = (int)trans_type;
+	d["ease_type"] = (int)ease_type;
+	d["custom_method"] = _det_serialize_callable(custom_method);
+	d["delay"] = delay;
+	d["do_continue"] = do_continue;
+	d["do_continue_delayed"] = do_continue_delayed;
+	d["relative"] = relative;
+	return d;
+}
+
+void PropertyTweener::_det_restore(const Dictionary &d) {
+	target = ObjectID((uint64_t)(int64_t)d["target"]);
+	Array prop = d["property"];
+	property.resize(prop.size());
+	for (int i = 0; i < prop.size(); i++) {
+		property.write[i] = prop[i];
+	}
+	initial_val = d["initial_val"];
+	base_final_val = d["base_final_val"];
+	final_val = d["final_val"];
+	delta_val = d["delta_val"];
+	duration = d["duration"];
+	trans_type = (Tween::TransitionType)(int)d["trans_type"];
+	ease_type = (Tween::EaseType)(int)d["ease_type"];
+	custom_method = _det_deserialize_callable(d["custom_method"]);
+	delay = d["delay"];
+	do_continue = d["do_continue"];
+	do_continue_delayed = d["do_continue_delayed"];
+	relative = d["relative"];
+	Object *t = ObjectDB::get_instance(target);
+	if (t && t->is_ref_counted()) {
+		ref_copy = t;
+	}
+}
+
+Dictionary IntervalTweener::_det_capture() const {
+	Dictionary d;
+	d["duration"] = duration;
+	return d;
+}
+
+void IntervalTweener::_det_restore(const Dictionary &d) {
+	duration = d["duration"];
+}
+
+Dictionary CallbackTweener::_det_capture() const {
+	Dictionary d;
+	d["callback"] = _det_serialize_callable(callback);
+	d["delay"] = delay;
+	return d;
+}
+
+void CallbackTweener::_det_restore(const Dictionary &d) {
+	callback = _det_deserialize_callable(d["callback"]);
+	delay = d["delay"];
+	Object *t = ObjectDB::get_instance(callback.get_object_id());
+	if (t && t->is_ref_counted()) {
+		ref_copy = t;
+	}
+}
+
+Dictionary MethodTweener::_det_capture() const {
+	Dictionary d;
+	d["duration"] = duration;
+	d["delay"] = delay;
+	d["trans_type"] = (int)trans_type;
+	d["ease_type"] = (int)ease_type;
+	d["initial_val"] = initial_val;
+	d["delta_val"] = delta_val;
+	d["final_val"] = final_val;
+	d["callback"] = _det_serialize_callable(callback);
+	return d;
+}
+
+void MethodTweener::_det_restore(const Dictionary &d) {
+	duration = d["duration"];
+	delay = d["delay"];
+	trans_type = (Tween::TransitionType)(int)d["trans_type"];
+	ease_type = (Tween::EaseType)(int)d["ease_type"];
+	initial_val = d["initial_val"];
+	delta_val = d["delta_val"];
+	final_val = d["final_val"];
+	callback = _det_deserialize_callable(d["callback"]);
+	Object *t = ObjectDB::get_instance(callback.get_object_id());
+	if (t && t->is_ref_counted()) {
+		ref_copy = t;
+	}
+}
+
+Dictionary SubtweenTweener::_det_capture() const {
+	Dictionary d;
+	d["delay"] = delay;
+	if (subtween.is_valid()) {
+		d["subtween"] = subtween->_det_capture();
+	}
+	return d;
+}
+
+void SubtweenTweener::_det_restore(const Dictionary &d) {
+	delay = d["delay"];
+	if (d.has("subtween")) {
+		Dictionary sd = d["subtween"];
+		subtween = Ref<Tween>(memnew(Tween));
+		ObjectDB::claim_instance_id(subtween.ptr(), ObjectID((uint64_t)(int64_t)sd["iid"]));
+		subtween->_det_restore(sd);
+	}
+}
+
+Dictionary AwaitTweener::_det_capture() const {
+	Dictionary d;
+	d["signal_name"] = signal.get_name();
+	Object *so = signal.get_object();
+	d["signal_oid"] = (int64_t)(uint64_t)(so ? so->get_instance_id() : ObjectID());
+	d["target_callable"] = _det_serialize_callable(target_callable);
+	d["received"] = received;
+	d["timeout"] = timeout;
+	return d;
+}
+
+void AwaitTweener::_det_restore(const Dictionary &d) {
+	Object *so = ObjectDB::get_instance(ObjectID((uint64_t)(int64_t)d["signal_oid"]));
+	if (so) {
+		signal = Signal(so, d["signal_name"]);
+	}
+	target_callable = Callable(this, SNAME("_signal_callback"));
+	if (signal.is_null() == false) {
+		signal.connect(target_callable);
+	}
+	received = d["received"];
+	timeout = d["timeout"];
+	if (so && so->is_ref_counted()) {
+		ref_copy = so;
+	}
 }

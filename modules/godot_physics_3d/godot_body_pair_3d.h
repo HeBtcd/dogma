@@ -108,6 +108,13 @@ public:
 	virtual bool pre_solve(real_t p_step) override;
 	virtual void solve(real_t p_step) override;
 
+	// YGIAH (det-snapshot): persistent contact-pair state (warm-start
+	// accumulators) — the main hidden channel behind AN-1 physics drift.
+	virtual uint32_t _det_kind() const override { return 1; }
+	virtual void _det_get_key(uint64_t r_key[5]) const override;
+	Dictionary _det_export_state() const;
+	Error _det_import_state(const Dictionary &p_state);
+
 	GodotBodyPair3D(GodotBody3D *p_A, int p_shape_A, GodotBody3D *p_B, int p_shape_B);
 	~GodotBodyPair3D();
 };

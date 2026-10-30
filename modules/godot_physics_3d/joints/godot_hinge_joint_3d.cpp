@@ -49,6 +49,56 @@ subject to the following restrictions:
 
 #include "godot_hinge_joint_3d.h"
 
+// YGIAH (det-snapshot): m_rbAFrame/m_rbBFrame are frozen at joint_make time
+// (the pivot/axis constructor derives them from the bodies' transforms at
+// that moment), so a rebuilt joint's frames differ unless restored verbatim.
+Dictionary GodotHingeJoint3D::_det_export_state() const {
+	Dictionary d;
+	d["fA"] = m_rbAFrame;
+	d["fB"] = m_rbBFrame;
+	d["mtv"] = m_motorTargetVelocity;
+	d["mmi"] = m_maxMotorImpulse;
+	d["lsoft"] = m_limitSoftness;
+	d["biasf"] = m_biasFactor;
+	d["relax"] = m_relaxationFactor;
+	d["llim"] = m_lowerLimit;
+	d["ulim"] = m_upperLimit;
+	d["khinge"] = m_kHinge;
+	d["lsign"] = m_limitSign;
+	d["corr"] = m_correction;
+	d["acclim"] = m_accLimitImpulse;
+	d["tau"] = tau;
+	d["ulim_f"] = m_useLimit;
+	d["aonly"] = m_angularOnly;
+	d["emotor"] = m_enableAngularMotor;
+	d["slim"] = m_solveLimit;
+	d["applied"] = m_appliedImpulse;
+	return d;
+}
+
+Error GodotHingeJoint3D::_det_import_state(const Dictionary &d) {
+	m_rbAFrame = d["fA"];
+	m_rbBFrame = d["fB"];
+	m_motorTargetVelocity = d["mtv"];
+	m_maxMotorImpulse = d["mmi"];
+	m_limitSoftness = d["lsoft"];
+	m_biasFactor = d["biasf"];
+	m_relaxationFactor = d["relax"];
+	m_lowerLimit = d["llim"];
+	m_upperLimit = d["ulim"];
+	m_kHinge = d["khinge"];
+	m_limitSign = d["lsign"];
+	m_correction = d["corr"];
+	m_accLimitImpulse = d["acclim"];
+	tau = d["tau"];
+	m_useLimit = d["ulim_f"];
+	m_angularOnly = d["aonly"];
+	m_enableAngularMotor = d["emotor"];
+	m_solveLimit = d["slim"];
+	m_appliedImpulse = d["applied"];
+	return OK;
+}
+
 GodotHingeJoint3D::GodotHingeJoint3D(GodotBody3D *rbA, GodotBody3D *rbB, const Transform3D &frameA, const Transform3D &frameB) :
 		GodotJoint3D(_arr, 2) {
 	A = rbA;

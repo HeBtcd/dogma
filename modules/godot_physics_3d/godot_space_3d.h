@@ -36,6 +36,7 @@
 #include "godot_collision_object_3d.h"
 #include "godot_soft_body_3d.h"
 
+#include "core/templates/hashfuncs.h"
 #include "core/typedefs.h"
 #include "servers/physics_3d/direct_states/physics_direct_space_state_3d.h"
 
@@ -120,6 +121,24 @@ private:
 	Vector<Vector3> contact_debug;
 	int contact_debug_count = 0;
 
+	// YGIAH (det-snapshot): creation-ordinal bookkeeping used to canonicalize
+	// solver/iteration order, plus a staging table of captured pair state
+	// applied to contact pairs as the broadphase re-creates them.
+	uint64_t object_ordinal_counter = 0;
+	struct PendingPairKey {
+		uint64_t ord_a = 0, ord_b = 0;
+		int sub_a = 0, sub_b = 0;
+		bool operator==(const PendingPairKey &k) const {
+			return ord_a == k.ord_a && ord_b == k.ord_b && sub_a == k.sub_a && sub_b == k.sub_b;
+		}
+		static uint32_t hash(const PendingPairKey &k) {
+			uint64_t h = hash_murmur3_one_64(k.ord_a * 0x9E3779B97F4A7C15ULL + k.sub_a);
+			h = hash_murmur3_one_64(k.ord_b * 0x9E3779B97F4A7C15ULL + k.sub_b + h);
+			return (uint32_t)h;
+		}
+	};
+	HashMap<PendingPairKey, Dictionary, PendingPairKey> pending_pair_state;
+
 	friend class GodotPhysicsDirectSpaceState3D;
 
 	int _cull_aabb_for_body(GodotBody3D *p_body, const AABB &p_aabb);
@@ -201,6 +220,11 @@ public:
 
 	void set_static_global_body(RID p_body) { static_global_body = p_body; }
 	RID get_static_global_body() { return static_global_body; }
+
+	// YGIAH (det-snapshot)
+	Dictionary _det_export_state() const;
+	Error _det_import_state(const Dictionary &p_state);
+	uint64_t _det_next_ordinal() { return ++object_ordinal_counter; }
 
 	void set_elapsed_time(ElapsedTime p_time, uint64_t p_msec) { elapsed_time[p_time] = p_msec; }
 	uint64_t get_elapsed_time(ElapsedTime p_time) const { return elapsed_time[p_time]; }

@@ -2598,6 +2598,207 @@ void ObjectDB::remove_instance(Object *p_object) {
 	spin_lock.unlock();
 }
 
+// YGIAH (det-snapshot)
+Dictionary ObjectDB::snapshot_state() {
+	Dictionary d;
+	spin_lock.lock();
+	d["validator_counter"] = (int64_t)validator_counter;
+	d["slot_count"] = (int64_t)slot_count;
+	d["slot_max"] = (int64_t)slot_max;
+	PackedInt64Array free_stack;
+	free_stack.resize(slot_max - slot_count);
+	for (uint32_t i = slot_count; i < slot_max; i++) {
+		free_stack.write[i - slot_count] = (int64_t)object_slots[i].next_free;
+	}
+	PackedInt64Array validators;
+	validators.resize(slot_max);
+	for (uint32_t i = 0; i < slot_max; i++) {
+		validators.write[i] = (int64_t)object_slots[i].validator;
+	}
+	spin_lock.unlock();
+	d["free_stack"] = free_stack;
+	d["validators"] = validators;
+	return d;
+}
+
+void ObjectDB::restore_state(const Dictionary &p_state) {
+	PackedInt64Array saved_free = p_state["free_stack"];
+	PackedInt64Array saved_validators = p_state["validators"];
+	uint64_t saved_vcounter = (uint64_t)(int64_t)p_state["validator_counter"];
+	uint32_t saved_slot_max = saved_validators.size();
+
+	spin_lock.lock();
+
+	// Grow the table if the captured layout was larger.
+	if (slot_max < saved_slot_max) {
+		uint32_t new_max = saved_slot_max;
+		object_slots = (ObjectSlot *)memrealloc(object_slots, sizeof(ObjectSlot) * new_max);
+		for (uint32_t i = slot_max; i < new_max; i++) {
+			object_slots[i].object = nullptr;
+			object_slots[i].is_ref_counted = false;
+			object_slots[i].next_free = i;
+			object_slots[i].validator = 0;
+		}
+		slot_max = new_max;
+	}
+
+	// Rebuild the free stack in the captured pop order, skipping slots that
+	// are occupied now (they were free at capture time but got recycled into
+	// live objects, or objects created between capture and restore).
+	LocalVector<uint32_t> new_stack;
+	HashSet<uint32_t> stacked;
+	for (int64_t i = 0; i < saved_free.size(); i++) {
+		uint32_t slot = (uint32_t)saved_free[i];
+		if (slot < slot_max && object_slots[slot].object == nullptr && !stacked.has(slot)) {
+			new_stack.push_back(slot);
+			stacked.insert(slot);
+		}
+	}
+	// Any slot that was occupied at capture time but has no live object now
+	// (e.g. never rebuilt) is pushed at the end and warned about.
+	LocalVector<uint32_t> warned_slots;
+	for (uint32_t i = 0; i < slot_max; i++) {
+		if (i < saved_slot_max && saved_validators[i] != 0 && object_slots[i].object == nullptr && !stacked.has(i)) {
+			warned_slots.push_back(i);
+			new_stack.push_back(i);
+			stacked.insert(i);
+		}
+	}
+	// And any currently-free slot that was never free in the snapshot (cannot
+	// normally happen) must also stay reachable for the allocator.
+	for (uint32_t i = 0; i < slot_max; i++) {
+		if (object_slots[i].object == nullptr && !stacked.has(i)) {
+			new_stack.push_back(i);
+			stacked.insert(i);
+		}
+	}
+
+	ERR_FAIL_COND(new_stack.size() > slot_max);
+	slot_count = slot_max - new_stack.size();
+	uint32_t w = slot_count;
+	for (uint32_t i = 0; i < new_stack.size(); i++) {
+		object_slots[w].next_free = new_stack[i];
+		w++;
+	}
+	for (uint32_t i = w; i < slot_max; i++) {
+		object_slots[i].next_free = i;
+	}
+	// Occupied slots keep the validator written by claim_instance_id (or by
+	// the object's own registration); free slots are invalidated.
+	for (uint32_t i = 0; i < slot_max; i++) {
+		if (object_slots[i].object == nullptr) {
+			object_slots[i].validator = 0;
+			object_slots[i].is_ref_counted = false;
+		}
+	}
+	validator_counter = saved_vcounter;
+	spin_lock.unlock();
+	for (uint32_t i = 0; i < warned_slots.size(); i++) {
+		WARN_PRINT("ObjectDB::restore_state: slot " + itos(warned_slots[i]) + " was occupied in the snapshot but has no live object; returning it to the free list.");
+	}
+}
+
+void ObjectDB::claim_instance_id(Object *p_object, ObjectID p_id) {
+	uint64_t id = (uint64_t)p_id;
+	uint32_t slot = id & OBJECTDB_SLOT_MAX_COUNT_MASK;
+	uint64_t validator = (id >> OBJECTDB_SLOT_MAX_COUNT_BITS) & OBJECTDB_VALIDATOR_MASK;
+
+	bool warn_steal = false;
+	bool warn_unstacked = false;
+	spin_lock.lock();
+	while (slot >= slot_max) {
+		uint32_t new_slot_max = slot_max > 0 ? slot_max * 2 : 1;
+		object_slots = (ObjectSlot *)memrealloc(object_slots, sizeof(ObjectSlot) * new_slot_max);
+		for (uint32_t i = slot_max; i < new_slot_max; i++) {
+			object_slots[i].object = nullptr;
+			object_slots[i].is_ref_counted = false;
+			object_slots[i].next_free = i;
+			object_slots[i].validator = 0;
+		}
+		slot_max = new_slot_max;
+	}
+
+	uint64_t cur = (uint64_t)p_object->get_instance_id();
+	if (cur == id) {
+		spin_lock.unlock();
+		return;
+	}
+	uint32_t cur_slot = cur & OBJECTDB_SLOT_MAX_COUNT_MASK;
+	// Release the object's current slot back onto the free stack.
+	if (cur_slot < slot_max && object_slots[cur_slot].object == p_object) {
+		slot_count--;
+		object_slots[slot_count].next_free = cur_slot;
+		object_slots[cur_slot].object = nullptr;
+		object_slots[cur_slot].validator = 0;
+		object_slots[cur_slot].is_ref_counted = false;
+	}
+
+	if (object_slots[slot].object == nullptr) {
+		// The target slot is free: it is still referenced by the free stack,
+		// so pull its entry out (replace with the bottom stack cell) before
+		// a later add_instance can pop it and collide.
+		bool found = false;
+		for (uint32_t i = slot_count; i < slot_max; i++) {
+			if (object_slots[i].next_free == slot) {
+				object_slots[i].next_free = object_slots[slot_count].next_free;
+				slot_count++;
+				found = true;
+				break;
+			}
+		}
+		if (!found) {
+			warn_unstacked = true;
+			slot_count++;
+		}
+	} else {
+		// The snapshot wants this slot but a post-snapshot transient lives
+		// here. Evict the transient to a fresh free slot and give it a new
+		// ID; nothing serialized references its post-snapshot identity.
+		warn_steal = true;
+		Object *occupant = object_slots[slot].object;
+		if (slot_count == slot_max) {
+			// No free slot: grow the table first.
+			uint32_t new_slot_max = slot_max > 0 ? slot_max * 2 : 1;
+			object_slots = (ObjectSlot *)memrealloc(object_slots, sizeof(ObjectSlot) * new_slot_max);
+			for (uint32_t i = slot_max; i < new_slot_max; i++) {
+				object_slots[i].object = nullptr;
+				object_slots[i].is_ref_counted = false;
+				object_slots[i].next_free = i;
+				object_slots[i].validator = 0;
+			}
+			slot_max = new_slot_max;
+		}
+		uint32_t dest = object_slots[slot_count].next_free;
+		slot_count++;
+		validator_counter = (validator_counter + 1) & OBJECTDB_VALIDATOR_MASK;
+		if (unlikely(validator_counter == 0)) {
+			validator_counter = 1;
+		}
+		object_slots[dest].object = occupant;
+		object_slots[dest].is_ref_counted = object_slots[slot].is_ref_counted;
+		object_slots[dest].validator = validator_counter;
+		uint64_t oid = validator_counter;
+		oid <<= OBJECTDB_SLOT_MAX_COUNT_BITS;
+		oid |= uint64_t(dest);
+		if (occupant->is_ref_counted()) {
+			oid |= OBJECTDB_REFERENCE_BIT;
+		}
+		occupant->_instance_id = ObjectID(oid);
+	}
+
+	object_slots[slot].object = p_object;
+	object_slots[slot].validator = validator;
+	object_slots[slot].is_ref_counted = p_object->is_ref_counted();
+	p_object->_instance_id = p_id;
+	spin_lock.unlock();
+	if (warn_steal) {
+		WARN_PRINT("ObjectDB::claim_instance_id: target slot was occupied; evicted its transient owner to a fresh slot.");
+	}
+	if (warn_unstacked) {
+		WARN_PRINT("ObjectDB::claim_instance_id: target slot is free but absent from the free stack; claiming anyway.");
+	}
+}
+
 void ObjectDB::setup() {
 	//nothing to do now
 }

@@ -118,6 +118,42 @@ void GodotBroadPhase3DBVH::update() {
 	bvh.update();
 }
 
+AABB GodotBroadPhase3DBVH::det_get_item_aabb(ID p_id) {
+	AABB r;
+	ERR_FAIL_COND_V(!p_id, r);
+	BVHHandle h;
+	h.set(p_id - 1);
+	bvh.item_get_AABB(h, r);
+	return r;
+}
+
+void GodotBroadPhase3DBVH::det_set_pair_aabb(ID p_id, const AABB &p_aabb) {
+	ERR_FAIL_COND(!p_id);
+	bvh.det_set_pair_aabb(p_id - 1, p_aabb);
+}
+
+void GodotBroadPhase3DBVH::det_mark_changed(ID p_id) {
+	ERR_FAIL_COND(!p_id);
+	bvh.det_mark_changed(p_id - 1);
+}
+
+void GodotBroadPhase3DBVH::det_for_each_pair(LocalVector<DetPairEntry> &r_pairs) {
+	LocalVector<decltype(bvh)::DetPairEntry> raw;
+	bvh.det_for_each_pair(raw);
+	for (const auto &e : raw) {
+		DetPairEntry de;
+		de.id_a = e.id_a + 1;
+		de.id_b = e.id_b + 1;
+		de.userdata = e.userdata;
+		r_pairs.push_back(de);
+	}
+}
+
+void GodotBroadPhase3DBVH::det_unpair(ID p_a, ID p_b) {
+	ERR_FAIL_COND(!p_a || !p_b);
+	bvh.det_unpair(p_a - 1, p_b - 1);
+}
+
 GodotBroadPhase3D *GodotBroadPhase3DBVH::_create() {
 	return memnew(GodotBroadPhase3DBVH);
 }

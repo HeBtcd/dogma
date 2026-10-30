@@ -211,6 +211,17 @@ void SceneTree::flush_transform_notifications() {
 	}
 }
 
+void SceneTree::discard_transform_notifications() {
+	_THREAD_SAFE_METHOD_
+
+	SelfList<Node> *n = xform_change_list.first();
+	while (n) {
+		SelfList<Node> *nx = n->next();
+		xform_change_list.remove(n);
+		n = nx;
+	}
+}
+
 bool SceneTree::is_accessibility_enabled() const {
 	if (!DisplayServer::get_singleton()->has_feature(DisplayServerEnums::FEATURE_ACCESSIBILITY_SCREEN_READER)) {
 		return false;
@@ -851,6 +862,175 @@ void SceneTree::process_tweens(double p_delta, bool p_physics) {
 		}
 		E = N;
 	}
+}
+
+// --------- YGIAH (det-snapshot) ---------
+
+static Dictionary _det_serialize_callable_scenetree(const Callable &p_c) {
+	Dictionary d;
+	if (!p_c.is_valid()) {
+		d["null"] = true;
+		return d;
+	}
+	ObjectID oid = p_c.get_object_id();
+	if (p_c.is_custom() && oid.is_null()) {
+		d["unsupported"] = true;
+		WARN_PRINT("det-snapshot: custom callable without object target cannot be serialized.");
+		return d;
+	}
+	d["oid"] = (int64_t)(uint64_t)oid;
+	d["method"] = p_c.get_method();
+	if (p_c.get_bound_arguments_count() > 0) {
+		d["binds"] = p_c.get_bound_arguments();
+	}
+	return d;
+}
+
+static Callable _det_deserialize_callable_scenetree(const Dictionary &d) {
+	if (d.get("null", false) || d.get("unsupported", false)) {
+		return Callable();
+	}
+	Callable c(ObjectID((uint64_t)(int64_t)d["oid"]), d["method"]);
+	if (d.has("binds")) {
+		c = c.bindv(d["binds"]);
+	}
+	return c;
+}
+
+void SceneTree::_det_capture_node(Node *p_node, int p_depth, Array &r_nodes) const {
+	// DFS pre-order list keyed by traversal index. Path-keyed dictionaries
+	// were dropped: String(get_path()) per node perturbs the allocator enough
+	// to reorder pointer-keyed constraint maps downstream (ladder phase-0
+	// diverged at ~step 480 in an otherwise identical trajectory).
+	for (int i = 0; i < p_node->get_child_count(); i++) {
+		Node *child = p_node->get_child(i);
+		Dictionary st = child->_det_capture_state();
+		if (!st.is_empty()) {
+			Dictionary e;
+			e["name"] = child->get_name();
+			e["depth"] = p_depth;
+			e["st"] = st;
+			r_nodes.push_back(e);
+		}
+		_det_capture_node(child, p_depth + 1, r_nodes);
+	}
+}
+
+void SceneTree::_det_restore_node(Node *p_node, int p_depth, const Array &p_nodes, int &r_idx) {
+	// Mirror of _det_capture_node's DFS order: consume an entry only when its
+	// recorded name AND depth equal the current child's (sibling names are
+	// unique in Godot, so name+depth equality is a safe discriminator even if
+	// the entry actually belongs to a deeper descendant that never matches).
+	for (int i = 0; i < p_node->get_child_count(); i++) {
+		Node *child = p_node->get_child(i);
+		if (r_idx < p_nodes.size()) {
+			Dictionary e = p_nodes[r_idx];
+			if ((int)e["depth"] == p_depth && StringName(e["name"]) == child->get_name()) {
+				child->_det_restore_state(e["st"]);
+				r_idx++;
+			}
+		}
+		_det_restore_node(child, p_depth + 1, p_nodes, r_idx);
+	}
+}
+
+Dictionary SceneTree::_snapshot_det_state(int p_parts) {
+	// Normalize the boundary: baseline flushes the delete queue at the end of
+	// physics_process; doing it here makes the captured ObjectDB/ freelist
+	// state match the post-step baseline exactly.
+	_flush_delete_queue();
+
+	Dictionary d;
+	d["current_frame"] = current_frame;
+	d["physics_process_time"] = physics_process_time;
+	d["process_time"] = process_time;
+	d["paused"] = paused;
+	d["suspended"] = suspended;
+
+	Array timer_list;
+	for (const Ref<SceneTreeTimer> &t : timers) {
+		Dictionary e;
+		e["iid"] = (int64_t)(uint64_t)t->get_instance_id();
+		e["left"] = t->get_time_left();
+		e["always"] = t->is_process_always();
+		e["phys"] = t->is_process_in_physics();
+		e["ign"] = t->is_ignoring_time_scale();
+		List<Connection> conns;
+		t->get_signal_connection_list("timeout", &conns);
+		Array conn_list;
+		for (const Connection &c : conns) {
+			Dictionary cd;
+			cd["callable"] = _det_serialize_callable_scenetree(c.callable);
+			cd["flags"] = (int)c.flags;
+			conn_list.push_back(cd);
+		}
+		e["conns"] = conn_list;
+		timer_list.push_back(e);
+	}
+	d["timers"] = timer_list;
+
+	Array tween_list;
+	for (const Ref<Tween> &t : tweens) {
+		tween_list.push_back(t->_det_capture());
+	}
+	d["tweens"] = tween_list;
+
+	Array nodes;
+	if (root && (p_parts & 2)) {
+		_det_capture_node(root, 0, nodes);
+	}
+	d["nodes"] = nodes;
+	return d;
+}
+
+Error SceneTree::_restore_det_state(const Dictionary &d) {
+	current_frame = (int64_t)d.get("current_frame", current_frame);
+	physics_process_time = d.get("physics_process_time", physics_process_time);
+	process_time = d.get("process_time", process_time);
+	paused = d.get("paused", paused);
+	suspended = d.get("suspended", suspended);
+
+	// Recreate timers in capture order, reclaiming their ObjectIDs so pending
+	// messages/callables that reference them keep resolving.
+	timers.clear();
+	Array timer_list = d.get("timers", Array());
+	for (int i = 0; i < timer_list.size(); i++) {
+		Dictionary e = timer_list[i];
+		Ref<SceneTreeTimer> stt;
+		stt.instantiate();
+		ObjectDB::claim_instance_id(stt.ptr(), ObjectID((uint64_t)(int64_t)e["iid"]));
+		stt->set_process_always(e["always"]);
+		stt->set_time_left(e["left"]);
+		stt->set_process_in_physics(e["phys"]);
+		stt->set_ignore_time_scale(e["ign"]);
+		Array conn_list = e["conns"];
+		for (int c = 0; c < conn_list.size(); c++) {
+			Dictionary cd = conn_list[c];
+			Callable call = _det_deserialize_callable_scenetree(cd["callable"]);
+			if (call.is_valid()) {
+				stt->connect("timeout", call, (uint32_t)(int)cd["flags"]);
+			}
+		}
+		timers.push_back(stt);
+	}
+
+	// Recreate tweens in order.
+	tweens.clear();
+	Array tween_list = d.get("tweens", Array());
+	for (int i = 0; i < tween_list.size(); i++) {
+		Dictionary td = tween_list[i];
+		Ref<Tween> t = Ref<Tween>(memnew(Tween(this)));
+		ObjectDB::claim_instance_id(t.ptr(), ObjectID((uint64_t)(int64_t)td["iid"]));
+		t->_det_restore(td);
+		tweens.push_back(t);
+	}
+
+	Array nodes = d.get("nodes", Array());
+	if (root && !nodes.is_empty()) {
+		int idx = 0;
+		_det_restore_node(root, 0, nodes, idx);
+	}
+	return OK;
 }
 
 void SceneTree::finalize() {
@@ -1938,6 +2118,7 @@ void SceneTree::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_pause", "enable"), &SceneTree::set_pause);
 	ClassDB::bind_method(D_METHOD("is_paused"), &SceneTree::is_paused);
+	ClassDB::bind_method(D_METHOD("discard_transform_notifications"), &SceneTree::discard_transform_notifications);
 
 	ClassDB::bind_method(D_METHOD("create_timer", "time_sec", "process_always", "process_in_physics", "ignore_time_scale"), &SceneTree::create_timer, DEFVAL(true), DEFVAL(false), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("create_tween"), &SceneTree::create_tween);

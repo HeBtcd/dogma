@@ -593,6 +593,7 @@ protected:
 	void _clear_internal_resource_paths(const Variant &p_var);
 
 	friend class ::ClassDB;
+	friend class ObjectDB; // YGIAH (det-snapshot): claim_instance_id() writes _instance_id.
 	friend class PlaceholderExtensionInstance;
 
 	static void _add_class_to_classdb(GDType &p_class, const GDType *p_inherits);
@@ -945,6 +946,17 @@ public:
 
 	static void debug_objects(DebugFunc p_func, void *p_user_data);
 	static int get_object_count();
+
+	// YGIAH (det-snapshot): allocator state snapshot/restore.
+	// snapshot_state() records the validator counter and the whole free-slot
+	// stack (in pop order). restore_state() rebuilds the stack around the
+	// currently-live objects, so it must run after all objects that should
+	// keep their captured ids were re-claimed via claim_instance_id().
+	static Dictionary snapshot_state();
+	static void restore_state(const Dictionary &p_state);
+	// Re-registers p_object under p_id's slot/validator without going through
+	// the normal free-stack pop. Only valid before restore_state().
+	static void claim_instance_id(Object *p_object, ObjectID p_id);
 };
 
 // Using `RequiredResult<T>` as the return type indicates that null will only be returned in the case of an error.

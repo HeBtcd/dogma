@@ -39,6 +39,7 @@ class SceneTree;
 
 class Tweener : public RefCounted {
 	GDCLASS(Tweener, RefCounted);
+	friend class Tween; // YGIAH: det-restore fills elapsed_time/finished.
 
 	ObjectID tween_id;
 
@@ -46,6 +47,14 @@ public:
 	virtual void set_tween(const Ref<Tween> &p_tween);
 	virtual void start();
 	virtual bool step(double &r_delta) = 0;
+
+	// YGIAH (det-snapshot): per-tweener state capture/restore.
+	virtual Dictionary _det_capture() const { return Dictionary(); }
+	virtual void _det_restore(const Dictionary &p_state) {}
+	String _det_type() const;
+	// Suppresses "can't be created directly" ctor errors while det-restore
+	// constructs tweeners to fill with captured fields.
+	static bool det_restore_in_progress;
 
 protected:
 	static void _bind_methods();
@@ -192,6 +201,10 @@ public:
 	Node *get_bound_node() const;
 	double get_total_time() const;
 
+	// YGIAH (det-snapshot): full tween state incl. per-step tweener lists.
+	Dictionary _det_capture() const;
+	Error _det_restore(const Dictionary &p_state);
+
 	Tween();
 	Tween(SceneTree *p_parent_tree);
 };
@@ -244,6 +257,11 @@ private:
 	bool do_continue = true;
 	bool do_continue_delayed = false;
 	bool relative = false;
+
+public:
+	// YGIAH (det-snapshot)
+	Dictionary _det_capture() const override;
+	void _det_restore(const Dictionary &p_state) override;
 };
 
 class IntervalTweener : public Tweener {
@@ -254,6 +272,10 @@ public:
 
 	IntervalTweener(double p_time);
 	IntervalTweener();
+
+	// YGIAH (det-snapshot)
+	Dictionary _det_capture() const override;
+	void _det_restore(const Dictionary &p_state) override;
 
 private:
 	double duration = 0;
@@ -278,6 +300,11 @@ private:
 	double delay = 0;
 
 	Ref<RefCounted> ref_copy;
+
+public:
+	// YGIAH (det-snapshot)
+	Dictionary _det_capture() const override;
+	void _det_restore(const Dictionary &p_state) override;
 };
 
 class MethodTweener : public Tweener {
@@ -309,6 +336,11 @@ private:
 	Callable callback;
 
 	Ref<RefCounted> ref_copy;
+
+public:
+	// YGIAH (det-snapshot)
+	Dictionary _det_capture() const override;
+	void _det_restore(const Dictionary &p_state) override;
 };
 
 class SubtweenTweener : public Tweener {
@@ -323,6 +355,10 @@ public:
 
 	SubtweenTweener(const Ref<Tween> &p_subtween);
 	SubtweenTweener();
+
+	// YGIAH (det-snapshot)
+	Dictionary _det_capture() const override;
+	void _det_restore(const Dictionary &p_state) override;
 
 protected:
 	static void _bind_methods();
@@ -356,4 +392,9 @@ private:
 	void _signal_received(const Variant **p_args, int p_argcount, Callable::CallError &r_error);
 
 	Ref<RefCounted> ref_copy;
+
+public:
+	// YGIAH (det-snapshot)
+	Dictionary _det_capture() const override;
+	void _det_restore(const Dictionary &p_state) override;
 };

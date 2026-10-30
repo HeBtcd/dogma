@@ -33,9 +33,12 @@
 #include "godot_area_pair_3d.h"
 #include "godot_body_pair_3d.h"
 #include "godot_collision_solver_3d.h"
+#include "godot_joint_3d.h"
 #include "godot_physics_server_3d.h"
 
 #include "core/config/project_settings.h"
+#include "core/object/object.h"
+#include "scene/main/node.h"
 
 #define TEST_MOTION_MARGIN_MIN_VALUE 0.0001
 #define TEST_MOTION_MIN_CONTACT_DEPTH_FACTOR 0.05
@@ -1024,6 +1027,13 @@ void *GodotSpace3D::_broadphase_pair(GodotCollisionObject3D *A, int p_subindex_A
 		SWAP(p_subindex_A, p_subindex_B);
 		SWAP(type_A, type_B);
 	}
+	// YGIAH (det-snapshot): canonical orientation — within same-type pairs
+	// the lower-ordinal object is always A, so recreated pairs match the
+	// captured A/B direction bit-for-bit regardless of broadphase order.
+	if (type_A == type_B && A->get_det_ordinal() > B->get_det_ordinal()) {
+		SWAP(A, B);
+		SWAP(p_subindex_A, p_subindex_B);
+	}
 
 	GodotSpace3D *self = static_cast<GodotSpace3D *>(p_self);
 
@@ -1050,6 +1060,23 @@ void *GodotSpace3D::_broadphase_pair(GodotCollisionObject3D *A, int p_subindex_A
 			return soft_pair;
 		} else {
 			GodotBodyPair3D *b = memnew(GodotBodyPair3D(static_cast<GodotBody3D *>(A), p_subindex_A, static_cast<GodotBody3D *>(B), p_subindex_B));
+			// YGIAH (det-snapshot): if this pair existed at capture time, its
+			// warm-start accumulators were staged by _det_import_state().
+			if (!self->pending_pair_state.is_empty()) {
+				PendingPairKey k;
+				k.ord_a = A->get_det_ordinal();
+				k.sub_a = p_subindex_A;
+				k.ord_b = B->get_det_ordinal();
+				k.sub_b = p_subindex_B;
+				Dictionary *st = self->pending_pair_state.getptr(k);
+				if (st) {
+					Error imp_err = b->_det_import_state(*st);
+					if (imp_err != OK) {
+						WARN_PRINT("det-snapshot: pair create-time import failed ord_a=" + itos(k.ord_a) + " ord_b=" + itos(k.ord_b));
+					}
+					self->pending_pair_state.erase(k);
+				}
+			}
 			return b;
 		}
 	} else {
@@ -1097,6 +1124,9 @@ GodotBroadPhase3D *GodotSpace3D::get_broadphase() {
 void GodotSpace3D::add_object(GodotCollisionObject3D *p_object) {
 	ERR_FAIL_COND(objects.has(p_object));
 	objects.insert(p_object);
+	// YGIAH (det-snapshot): arrival order within the space. _det_import_state
+	// may overwrite it with the captured ordinal afterwards.
+	p_object->set_det_ordinal(_det_next_ordinal());
 }
 
 void GodotSpace3D::remove_object(GodotCollisionObject3D *p_object) {
@@ -1262,4 +1292,442 @@ GodotSpace3D::GodotSpace3D() {
 GodotSpace3D::~GodotSpace3D() {
 	memdelete(broadphase);
 	memdelete(direct_access);
+}
+
+/* --------- YGIAH (det-snapshot) --------- */
+
+Dictionary GodotSpace3D::_det_export_state() const {
+	Dictionary d;
+	d["object_ordinal_counter"] = (int64_t)object_ordinal_counter;
+	d["solver_iterations"] = solver_iterations;
+	d["contact_recycle_radius"] = contact_recycle_radius;
+	d["contact_max_separation"] = contact_max_separation;
+	d["contact_max_allowed_penetration"] = contact_max_allowed_penetration;
+	d["contact_bias"] = contact_bias;
+	d["body_linear_velocity_sleep_threshold"] = body_linear_velocity_sleep_threshold;
+	d["body_angular_velocity_sleep_threshold"] = body_angular_velocity_sleep_threshold;
+	d["body_time_to_sleep"] = body_time_to_sleep;
+	d["last_step"] = last_step;
+	d["island_count"] = island_count;
+	d["active_objects"] = active_objects;
+	d["collision_pairs"] = collision_pairs;
+
+	// Objects in canonical ordinal order.
+	LocalVector<GodotCollisionObject3D *> sorted_objects;
+	for (GodotCollisionObject3D *obj : objects) {
+		sorted_objects.push_back(obj);
+	}
+	struct _DetOrdLess {
+		_FORCE_INLINE_ bool operator()(const GodotCollisionObject3D *a, const GodotCollisionObject3D *b) const {
+			return a->get_det_ordinal() < b->get_det_ordinal();
+		}
+	};
+	sorted_objects.sort_custom<_DetOrdLess>();
+
+	Array bodies;
+	HashMap<GodotCollisionObject3D *, int> obj_index;
+	for (uint32_t i = 0; i < sorted_objects.size(); i++) {
+		obj_index[sorted_objects[i]] = (int)i;
+	}
+	for (GodotCollisionObject3D *obj : sorted_objects) {
+		Dictionary od;
+		od["type"] = (int)obj->get_type();
+		od["ord"] = (int64_t)obj->get_det_ordinal();
+		od["instance_id"] = (int64_t)(uint64_t)obj->get_instance_id();
+		{
+			// Broadphase AABBs per shape — the grow margin in aabb_cache is
+			// accumulated state and must be imported verbatim, or pair
+			// formation after restore diverges from the baseline.
+			Array aabbs;
+			for (int i = 0; i < obj->get_shape_count(); i++) {
+				aabbs.push_back(obj->get_shape_aabb(i));
+			}
+			od["aabbs"] = aabbs;
+			Vector<AABB> pair_aabbs;
+			obj->det_export_shape_pair_aabbs(pair_aabbs);
+			Array pa;
+			for (const AABB &a : pair_aabbs) {
+				pa.push_back(a);
+			}
+			od["pair_aabbs"] = pa;
+		}
+		{
+			// Rebuilt objects carry fresh ObjectIDs; match them by the
+			// stable scene path of their owner node instead.
+			Object *owner = ObjectDB::get_instance(obj->get_instance_id());
+			Node *owner_node = Object::cast_to<Node>(owner);
+			if (owner_node && owner_node->is_inside_tree()) {
+				od["path"] = String(owner_node->get_path());
+			} else {
+				od["owner"] = owner ? (owner->get_class() + (Object::cast_to<Node>(owner) ? "!intree" : "!node")) : String("null");
+			}
+		}
+		switch (obj->get_type()) {
+			case GodotCollisionObject3D::TYPE_BODY: {
+				GodotBody3D *bd = static_cast<GodotBody3D *>(obj);
+				od["body"] = bd->_det_export_state();
+			} break;
+			default:
+				// Areas and soft bodies: scalar data only (documented gap).
+				od["unsupported"] = true;
+				WARN_PRINT_ONCE("det-snapshot: non-body physics object state is not serialized (area/soft body).");
+				break;
+		}
+		bodies.push_back(od);
+	}
+	d["objects"] = bodies;
+
+	// Contact pairs: dedupe over per-body constraint maps.
+	Array pairs;
+	HashSet<GodotConstraint3D *> seen;
+	for (GodotCollisionObject3D *obj : sorted_objects) {
+		if (obj->get_type() != GodotCollisionObject3D::TYPE_BODY) {
+			continue;
+		}
+		GodotBody3D *body = static_cast<GodotBody3D *>(obj);
+		for (const KeyValue<GodotConstraint3D *, int> &E : body->get_constraint_map()) {
+			GodotConstraint3D *c = E.key;
+			if (seen.has(c) || c->_det_kind() != 1) {
+				continue;
+			}
+			seen.insert(c);
+			pairs.push_back(static_cast<GodotBodyPair3D *>(c)->_det_export_state());
+		}
+	}
+	d["pairs"] = pairs;
+
+	// Joints: dedupe over per-body constraint maps, then emit in canonical
+	// key order so same-key multi-joints map to a stable occurrence index.
+	// A rebuilt joint recomputes its anchor frames/pivots against
+	// then-current body transforms, so solver-internal joint state must
+	// round-trip verbatim.
+	{
+		Vector<GodotConstraint3D *> jc;
+		for (GodotCollisionObject3D *obj : sorted_objects) {
+			if (obj->get_type() != GodotCollisionObject3D::TYPE_BODY) {
+				continue;
+			}
+			GodotBody3D *body = static_cast<GodotBody3D *>(obj);
+			for (const KeyValue<GodotConstraint3D *, int> &E : body->get_constraint_map()) {
+				GodotConstraint3D *c = E.key;
+				if (seen.has(c) || c->_det_kind() != 2) {
+					continue;
+				}
+				seen.insert(c);
+				jc.push_back(c);
+			}
+		}
+		struct _DetJLess {
+			_FORCE_INLINE_ bool operator()(GodotConstraint3D *a, GodotConstraint3D *b) const {
+				uint64_t ka[5], kb[5];
+				a->_det_get_key(ka);
+				b->_det_get_key(kb);
+				for (int i = 0; i < 5; i++) {
+					if (ka[i] != kb[i]) {
+						return ka[i] < kb[i];
+					}
+				}
+				return a < b;
+			}
+		};
+		jc.sort_custom<_DetJLess>();
+		Array joints;
+		for (GodotConstraint3D *c : jc) {
+			Dictionary st = c->_det_export_state();
+			if (st.is_empty()) {
+				WARN_PRINT_ONCE("det-snapshot: joint has no state serializer (type unknown); skipping.");
+				continue;
+			}
+			uint64_t k[5];
+			c->_det_get_key(k);
+			Dictionary jd;
+			jd["ord_a"] = (int64_t)k[0];
+			jd["sub_a"] = (int64_t)k[1];
+			jd["ord_b"] = (int64_t)k[2];
+			jd["sub_b"] = (int64_t)k[3];
+			jd["jtype"] = (int)(static_cast<GodotJoint3D *>(c)->get_type());
+			jd["st"] = st;
+			joints.push_back(jd);
+		}
+		d["joints"] = joints;
+	}
+
+	// YGIAH: the solver iterates active_list for island generation, and the
+	// list's wake order is historical (prepend on activation), not ordinal.
+	// Export it as indices into "objects" so import can rebuild the exact
+	// iteration order — solver float accumulation depends on it.
+	Array active_order;
+	for (const SelfList<GodotBody3D> *E = active_list.first(); E; E = E->next()) {
+		int *pi = obj_index.getptr(E->self());
+		if (pi) {
+			active_order.push_back(*pi);
+		}
+	}
+	d["active_order"] = active_order;
+	return d;
+}
+
+Error GodotSpace3D::_det_import_state(const Dictionary &d) {
+	object_ordinal_counter = (uint64_t)(int64_t)d["object_ordinal_counter"];
+	solver_iterations = d["solver_iterations"];
+	contact_recycle_radius = d["contact_recycle_radius"];
+	contact_max_separation = d["contact_max_separation"];
+	contact_max_allowed_penetration = d["contact_max_allowed_penetration"];
+	contact_bias = d["contact_bias"];
+	body_linear_velocity_sleep_threshold = d["body_linear_velocity_sleep_threshold"];
+	body_angular_velocity_sleep_threshold = d["body_angular_velocity_sleep_threshold"];
+	body_time_to_sleep = d["body_time_to_sleep"];
+	last_step = d["last_step"];
+	island_count = d["island_count"];
+	active_objects = d["active_objects"];
+	collision_pairs = d["collision_pairs"];
+
+	// Bodies first: their fields, then stage pair state for re-creation.
+	Array objs = d["objects"];
+	HashMap<uint64_t, GodotCollisionObject3D *> by_ord;
+	HashMap<String, GodotCollisionObject3D *> by_path;
+	for (GodotCollisionObject3D *obj : objects) {
+		by_ord[obj->get_det_ordinal()] = obj;
+		Object *owner = ObjectDB::get_instance(obj->get_instance_id());
+		Node *owner_node = Object::cast_to<Node>(owner);
+		if (owner_node && owner_node->is_inside_tree()) {
+			by_path[String(owner_node->get_path())] = obj;
+		}
+	}
+	LocalVector<GodotCollisionObject3D *> matched;
+	matched.resize(objs.size());
+	for (int i = 0; i < objs.size(); i++) {
+		Dictionary od = objs[i];
+		uint64_t ord = (uint64_t)(int64_t)od["ord"];
+		// Rebuilt objects have fresh ObjectIDs, so match by the stable scene
+		// path first and fall back to the deterministic ordinal.
+		GodotCollisionObject3D *obj = nullptr;
+		if ((int64_t)od["instance_id"] != 0) {
+			// Node-owned object: the scene path is the only reliable key —
+			// ordinals may legitimately disagree after a rebuild, and matching
+			// by ordinal would silently apply state to the wrong body.
+			if (od.has("path")) {
+				GodotCollisionObject3D **pf = by_path.getptr(String(od["path"]));
+				if (pf) {
+					obj = *pf;
+				}
+			}
+		} else {
+			// Engine-internal object (default area etc.): deterministic
+			// creation order makes the ordinal authoritative.
+			GodotCollisionObject3D **found = by_ord.getptr(ord);
+			if (found) {
+				obj = *found;
+			}
+		}
+		if (!obj) {
+			WARN_PRINT("det-snapshot: physics object ordinal " + itos(ord) + " type=" + itos((int)od["type"]) + " path=" + String(od.get("path", "?")) + " iid=" + itos((int64_t)od["instance_id"]) + " has no restored counterpart (live=" + itos(objects.size()) + " bypath=" + itos(by_path.size()) + ").");
+			continue;
+		}
+		if (!od.get("unsupported", false) && obj->get_type() == GodotCollisionObject3D::TYPE_BODY && od.has("body")) {
+			static_cast<GodotBody3D *>(obj)->_det_import_state(od["body"]);
+		} else {
+			obj->set_det_ordinal(ord);
+		}
+		matched[i] = obj;
+	}
+
+	// YGIAH: import setters (collision layer/mask/priority) run
+	// _shapes_changed() -> wakeup()/wakeup_neighbours(), which can re-activate
+	// bodies whose own _det_import_state already applied active=false (joint
+	// neighbours imported later). Enforce the captured active flag in a second
+	// pass so active_list membership matches the snapshot exactly.
+	for (int i = 0; i < objs.size(); i++) {
+		Dictionary od = objs[i];
+		GodotCollisionObject3D *o = matched[i];
+		if (!o || o->get_type() != GodotCollisionObject3D::TYPE_BODY || !od.has("body")) {
+			continue;
+		}
+		GodotBody3D *body = static_cast<GodotBody3D *>(o);
+		Dictionary bd = od["body"];
+		bool want_active = bd.get("active", false);
+		if (body->is_active() != want_active) {
+			body->set_active(want_active);
+		}
+	}
+
+	// YGIAH: rebuild the exported active_list order. set_active() prepends,
+	// so toggling active bodies in REVERSED export order yields the captured
+	// list order — the solver's island generation/solve order depends on it.
+	Array active_order = d.get("active_order", Array());
+	if (!active_order.is_empty()) {
+		LocalVector<GodotBody3D *> reorder;
+		for (int i = active_order.size() - 1; i >= 0; i--) {
+			int idx = (int)active_order[i];
+			if (idx < 0 || idx >= objs.size()) {
+				continue;
+			}
+			GodotCollisionObject3D *o = matched[idx];
+			if (o && o->get_type() == GodotCollisionObject3D::TYPE_BODY) {
+				reorder.push_back(static_cast<GodotBody3D *>(o));
+			}
+		}
+		for (GodotBody3D *body : reorder) {
+			if (!body->is_active()) {
+				continue;
+			}
+			body->set_active(false);
+			body->set_active(true);
+		}
+	}
+
+	// YGIAH: pairs formed during the scene rebuild bound their A/B roles by
+	// ARRIVAL ordinal, which can disagree with the captured ordinal order —
+	// GodotBodyPair3D::_det_import_state() then fails its orientation assert
+	// and leaves factory-zero warm-start state. Unpair everything so every
+	// pair is re-created through _broadphase_pair() at the next update():
+	// ordinals are captured by then, so orientation is canonical and the
+	// staged state below is consumed at creation.
+	{
+		LocalVector<GodotBroadPhase3D::DetPairEntry> live_pairs;
+		broadphase->det_for_each_pair(live_pairs);
+		for (const GodotBroadPhase3D::DetPairEntry &e : live_pairs) {
+			GodotConstraint3D *c = static_cast<GodotConstraint3D *>(e.userdata);
+			if (c && c->_det_kind() == 1) {
+				broadphase->det_unpair(e.id_a, e.id_b);
+			}
+		}
+	}
+
+	// Stage pair warm-start state; the broadphase applies it as pairs are
+	// re-created by the shape flush below and on the next update().
+	pending_pair_state.clear();
+	Array pairs = d["pairs"];
+	for (int i = 0; i < pairs.size(); i++) {
+		Dictionary pd = pairs[i];
+		PendingPairKey k;
+		k.ord_a = (uint64_t)(int64_t)pd["ord_a"];
+		k.sub_a = pd["sub_a"];
+		k.ord_b = (uint64_t)(int64_t)pd["ord_b"];
+		k.sub_b = pd["sub_b"];
+		pending_pair_state[k] = pd;
+	}
+
+	// YGIAH: the scene rebuild queued every object into the server's
+	// pending_shape_update_list. Flushing those entries now recomputes the
+	// broadphase AABBs from the imported transforms — re-creating pairs with
+	// the staged warm-start state — and prevents the deferred _shape_changed()
+	// at the next PhysicsServer3D::step() from running _shapes_changed() ->
+	// wakeup()/wakeup_neighbours(), which would re-activate bodies captured
+	// asleep and diverge the first post-restore step.
+	for (uint32_t i = 0; i < matched.size(); i++) {
+		if (matched[i]) {
+			Dictionary od = objs[i];
+			Array aa = od.get("aabbs", Array());
+			Vector<AABB> aabbs;
+			for (const Variant &v : aa) {
+				aabbs.push_back(v);
+			}
+			Array pa = od.get("pair_aabbs", Array());
+			Vector<AABB> pair_aabbs;
+			for (const Variant &v : pa) {
+				pair_aabbs.push_back(v);
+			}
+			matched[i]->det_flush_shape_update(aabbs, pair_aabbs);
+		}
+	}
+
+	// YGIAH: pairs created during the scene REBUILD predated the
+	// pending_pair_state staging above, so _broadphase_pair() never offered
+	// them their staged warm-start state. Backfill: apply staged state to any
+	// existing body pair that still has one pending. Pairs that survive from
+	// rebuild AABBs are the common case; pairs re-created by the flush above
+	// already consumed (and erased) their entry at creation.
+	for (GodotCollisionObject3D *obj : objects) {
+		if (obj->get_type() != GodotCollisionObject3D::TYPE_BODY) {
+			continue;
+		}
+		for (const KeyValue<GodotConstraint3D *, int> &E : static_cast<GodotBody3D *>(obj)->get_constraint_map()) {
+			if (E.key->_det_kind() != 1) {
+				continue;
+			}
+			uint64_t k[5];
+			E.key->_det_get_key(k);
+			PendingPairKey pk;
+			pk.ord_a = k[0];
+			pk.sub_a = (int)k[1];
+			pk.ord_b = k[2];
+			pk.sub_b = (int)k[3];
+			Dictionary *st = pending_pair_state.getptr(pk);
+			if (st) {
+				Error imp_err = static_cast<GodotBodyPair3D *>(E.key)->_det_import_state(*st);
+				if (imp_err != OK) {
+					GodotBodyPair3D *bp = static_cast<GodotBodyPair3D *>(E.key);
+					WARN_PRINT("det-snapshot: pair backfill failed ord_a=" + itos(pk.ord_a) + " ord_b=" + itos(pk.ord_b) +
+							" actual_a=" + itos(bp->get_body_ptr()[0]->get_det_ordinal()) +
+							" actual_b=" + itos(bp->get_body_ptr()[1]->get_det_ordinal()));
+				}
+				pending_pair_state.erase(pk);
+			}
+		}
+	}
+
+	// YGIAH: joints already exist by now (configured during the scene
+	// rebuild / still live in-place). Their solver-internal anchors were
+	// recomputed against current body transforms — overwrite them with the
+	// captured joint state. Both sides sort by the same det key, so the
+	// i-th live joint of a given key pairs with the i-th captured entry.
+	{
+		Array joints = d.get("joints", Array());
+		if (!joints.is_empty()) {
+			HashMap<String, Vector<Dictionary>> captured;
+			for (int i = 0; i < joints.size(); i++) {
+				Dictionary jd = joints[i];
+				String k = itos((int64_t)jd["ord_a"]) + ":" + itos((int64_t)jd["sub_a"]) + "-" +
+						itos((int64_t)jd["ord_b"]) + ":" + itos((int64_t)jd["sub_b"]);
+				captured[k].push_back(jd);
+			}
+			Vector<GodotConstraint3D *> live;
+			HashSet<GodotConstraint3D *> seen_j;
+			for (GodotCollisionObject3D *obj : objects) {
+				if (obj->get_type() != GodotCollisionObject3D::TYPE_BODY) {
+					continue;
+				}
+				for (const KeyValue<GodotConstraint3D *, int> &E : static_cast<GodotBody3D *>(obj)->get_constraint_map()) {
+					if (!seen_j.has(E.key) && E.key->_det_kind() == 2) {
+						seen_j.insert(E.key);
+						live.push_back(E.key);
+					}
+				}
+			}
+			struct _DetJLess2 {
+				_FORCE_INLINE_ bool operator()(GodotConstraint3D *a, GodotConstraint3D *b) const {
+					uint64_t ka[5], kb[5];
+					a->_det_get_key(ka);
+					b->_det_get_key(kb);
+					for (int i = 0; i < 5; i++) {
+						if (ka[i] != kb[i]) {
+							return ka[i] < kb[i];
+						}
+					}
+					return a < b;
+				}
+			};
+			live.sort_custom<_DetJLess2>();
+			HashMap<String, int> used;
+			for (GodotConstraint3D *c : live) {
+				uint64_t k[5];
+				c->_det_get_key(k);
+				String ks = itos(k[0]) + ":" + itos(k[1]) + "-" + itos(k[2]) + ":" + itos(k[3]);
+				Vector<Dictionary> *list = captured.getptr(ks);
+				if (!list) {
+					continue;
+				}
+				int idx = used.has(ks) ? used[ks] : 0;
+				used[ks] = idx + 1;
+				if (idx < (int)list->size()) {
+					Error imp_err = c->_det_import_state((*list)[idx]["st"]);
+					if (imp_err != OK) {
+						WARN_PRINT("det-snapshot: joint state import failed key=" + ks);
+					}
+				}
+			}
+		}
+	}
+	return OK;
 }

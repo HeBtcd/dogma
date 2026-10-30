@@ -52,6 +52,11 @@ class GodotStep3D {
 	void _check_suspend(const LocalVector<GodotBody3D *> &p_body_island) const;
 
 public:
+	// YGIAH (det-snapshot): snapshot round-trips the step counter so
+	// imported island_step markers can't collide with a restarted counter.
+	uint64_t get_step_counter() const { return _step; }
+	void set_step_counter(uint64_t p_step) { _step = p_step; }
+
 	void step(GodotSpace3D *p_space, real_t p_delta);
 	GodotStep3D();
 	~GodotStep3D();

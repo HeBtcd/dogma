@@ -199,6 +199,43 @@ void Timer::_set_process(bool p_process, bool p_force) {
 	processing = p_process;
 }
 
+// YGIAH (det-snapshot): script-level start()/stop() cannot reproduce the
+// exact internal phase (processing flag + time_left written atomically),
+// which caused the one-tick drift in AN-3. Restore all fields directly.
+Dictionary Timer::_det_capture_state() const {
+	Dictionary d;
+	d["wait_time"] = wait_time;
+	d["one_shot"] = one_shot;
+	d["autostart"] = autostart;
+	d["processing"] = processing;
+	d["paused"] = paused;
+	d["ignore_time_scale"] = ignore_time_scale;
+	d["time_left"] = time_left;
+	d["process_callback"] = (int)timer_process_callback;
+	return d;
+}
+
+void Timer::_det_restore_state(const Dictionary &p_state) {
+	wait_time = p_state.get("wait_time", 1.0);
+	one_shot = p_state.get("one_shot", false);
+	autostart = p_state.get("autostart", false);
+	paused = p_state.get("paused", false);
+	ignore_time_scale = p_state.get("ignore_time_scale", false);
+	time_left = p_state.get("time_left", -1.0);
+	timer_process_callback = (TimerProcessCallback)(int)p_state.get("process_callback", TIMER_PROCESS_IDLE);
+	processing = p_state.get("processing", false);
+
+	bool active = processing && !paused;
+	switch (timer_process_callback) {
+		case TIMER_PROCESS_PHYSICS:
+			set_physics_process_internal(active);
+			break;
+		case TIMER_PROCESS_IDLE:
+			set_process_internal(active);
+			break;
+	}
+}
+
 PackedStringArray Timer::get_configuration_warnings() const {
 	PackedStringArray warnings = Node::get_configuration_warnings();
 

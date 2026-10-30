@@ -900,6 +900,13 @@ public:
 	virtual bool is_connected(const StringName &p_signal, const Callable &p_callable) const override;
 	virtual bool has_connections(const StringName &p_signal) const override;
 #endif
+	// YGIAH (det-snapshot): per-node internal deterministic state hooks.
+	// Nodes with hidden engine state (Timer, AnimationMixer, ...) override
+	// these so a whole-tree snapshot restores continuation-exact state.
+	// Not bound to scripts on purpose; driven by SceneTree's det snapshot.
+	virtual Dictionary _det_capture_state() const { return Dictionary(); }
+	virtual void _det_restore_state(const Dictionary &p_state) {}
+
 	Node();
 	~Node();
 };

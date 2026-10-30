@@ -218,6 +218,125 @@ real_t GodotG6DOFTranslationalLimitMotor3D::solveLinearAxis(
 
 //////////////////////////// GodotGeneric6DOFJoint3D ////////////////////////////////////
 
+// YGIAH (det-snapshot): frames frozen at joint_make + limit/motor state.
+static Dictionary _det_rot_limit_export(const GodotG6DOFRotationalLimitMotor3D &m) {
+	Dictionary d;
+	d["lo"] = m.m_loLimit;
+	d["hi"] = m.m_hiLimit;
+	d["tv"] = m.m_targetVelocity;
+	d["mmf"] = m.m_maxMotorForce;
+	d["mlf"] = m.m_maxLimitForce;
+	d["damp"] = m.m_damping;
+	d["lsoft"] = m.m_limitSoftness;
+	d["erp"] = m.m_ERP;
+	d["bounce"] = m.m_bounce;
+	d["em"] = m.m_enableMotor;
+	d["el"] = m.m_enableLimit;
+	d["cle"] = m.m_currentLimitError;
+	d["cl"] = m.m_currentLimit;
+	d["acc"] = m.m_accumulatedImpulse;
+	return d;
+}
+
+static void _det_rot_limit_import(GodotG6DOFRotationalLimitMotor3D &m, const Dictionary &d) {
+	m.m_loLimit = d["lo"];
+	m.m_hiLimit = d["hi"];
+	m.m_targetVelocity = d["tv"];
+	m.m_maxMotorForce = d["mmf"];
+	m.m_maxLimitForce = d["mlf"];
+	m.m_damping = d["damp"];
+	m.m_limitSoftness = d["lsoft"];
+	m.m_ERP = d["erp"];
+	m.m_bounce = d["bounce"];
+	m.m_enableMotor = d["em"];
+	m.m_enableLimit = d["el"];
+	m.m_currentLimitError = d["cle"];
+	m.m_currentLimit = d["cl"];
+	m.m_accumulatedImpulse = d["acc"];
+}
+
+Dictionary GodotGeneric6DOFJoint3D::_det_export_state() const {
+	Dictionary d;
+	d["fA"] = m_frameInA;
+	d["fB"] = m_frameInB;
+	d["urfA"] = m_useLinearReferenceFrameA;
+	{
+		Dictionary ld;
+		ld["lo"] = m_linearLimits.m_lowerLimit;
+		ld["hi"] = m_linearLimits.m_upperLimit;
+		ld["acc"] = m_linearLimits.m_accumulatedImpulse;
+		ld["lsoft"] = m_linearLimits.m_limitSoftness;
+		ld["damp"] = m_linearLimits.m_damping;
+		ld["rest"] = m_linearLimits.m_restitution;
+		Array el;
+		for (int i = 0; i < 3; i++) {
+			el.push_back(m_linearLimits.enable_limit[i]);
+		}
+		ld["el"] = el;
+		d["lin"] = ld;
+	}
+	{
+		Array a;
+		for (int i = 0; i < 3; i++) {
+			a.push_back(_det_rot_limit_export(m_angularLimits[i]));
+		}
+		d["ang"] = a;
+	}
+	{
+		Array a;
+		for (int i = 0; i < 3; i++) {
+			a.push_back(m_linearDriveForceLimit[i]);
+		}
+		d["ldfl"] = a;
+	}
+	{
+		Array a;
+		for (int i = 0; i < 3; i++) {
+			a.push_back(m_angularDriveTorqueLimit[i]);
+		}
+		d["adtl"] = a;
+	}
+	return d;
+}
+
+Error GodotGeneric6DOFJoint3D::_det_import_state(const Dictionary &d) {
+	m_frameInA = d["fA"];
+	m_frameInB = d["fB"];
+	m_useLinearReferenceFrameA = d["urfA"];
+	{
+		const Dictionary &ld = d["lin"];
+		m_linearLimits.m_lowerLimit = ld["lo"];
+		m_linearLimits.m_upperLimit = ld["hi"];
+		m_linearLimits.m_accumulatedImpulse = ld["acc"];
+		m_linearLimits.m_limitSoftness = ld["lsoft"];
+		m_linearLimits.m_damping = ld["damp"];
+		m_linearLimits.m_restitution = ld["rest"];
+		Array el = ld["el"];
+		for (int i = 0; i < 3 && i < el.size(); i++) {
+			m_linearLimits.enable_limit[i] = el[i];
+		}
+	}
+	{
+		Array a = d["ang"];
+		for (int i = 0; i < 3 && i < a.size(); i++) {
+			_det_rot_limit_import(m_angularLimits[i], a[i]);
+		}
+	}
+	{
+		Array a = d["ldfl"];
+		for (int i = 0; i < 3 && i < a.size(); i++) {
+			m_linearDriveForceLimit[i] = a[i];
+		}
+	}
+	{
+		Array a = d["adtl"];
+		for (int i = 0; i < 3 && i < a.size(); i++) {
+			m_angularDriveTorqueLimit[i] = a[i];
+		}
+	}
+	return OK;
+}
+
 GodotGeneric6DOFJoint3D::GodotGeneric6DOFJoint3D(GodotBody3D *rbA, GodotBody3D *rbB, const Transform3D &frameInA, const Transform3D &frameInB, bool useLinearReferenceFrameA) :
 		GodotJoint3D(_arr, 2),
 		m_frameInA(frameInA),
