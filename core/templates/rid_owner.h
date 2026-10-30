@@ -30,8 +30,10 @@
 
 #pragma once
 
+#include "core/core_globals.h"
 #include "core/os/memory.h"
 #include "core/os/mutex.h"
+#include "core/os/thread.h"
 #include "core/string/print_string.h"
 #include "core/templates/local_vector.h"
 #include "core/templates/safe_refcount.h"
@@ -107,6 +109,11 @@ class RID_Alloc : public RID_AllocBase {
 	mutable Mutex mutex;
 
 	_FORCE_INLINE_ RID _allocate_rid() {
+		// YGIAH (2026-10-31): deterministic mode — RID ids draw on a shared global
+		// counter; server objects created on workers (attack B2: PhysicsServer
+		// body/shape RIDs) interleave it and perturb broadphase/island input order.
+		// Hard abort, matching ObjectDB's policy for the same class of violation.
+		CRASH_COND_MSG(CoreGlobals::deterministic_mode && !Thread::is_main_thread(), "DETERMINISTIC MODE: server RID allocated off the main thread would pollute the global RID sequence (attack B2).");
 		if constexpr (THREAD_SAFE) {
 			mutex.lock();
 		}
@@ -328,6 +335,10 @@ public:
 	}
 
 	_FORCE_INLINE_ void free(const RID &p_rid) {
+		// YGIAH (2026-10-31): deterministic mode — frees mutate the slot reuse
+		// order, so they are main-thread domain too (attack B2). Hard abort:
+		// skipping the free would leave the slot dangling to freed memory.
+		CRASH_COND_MSG(CoreGlobals::deterministic_mode && !Thread::is_main_thread(), "DETERMINISTIC MODE: server RID freed off the main thread (attack B2).");
 		if constexpr (THREAD_SAFE) {
 			mutex.lock();
 		}

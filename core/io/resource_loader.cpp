@@ -33,6 +33,7 @@
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
 #include "core/core_bind.h"
+#include "core/core_globals.h"
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/io/resource_importer.h"
@@ -698,7 +699,17 @@ String ResourceLoader::_validate_local_path(const String &p_path) {
 }
 
 Error ResourceLoader::load_threaded_request(const String &p_path, const String &p_type_hint, bool p_use_sub_threads, CacheMode p_cache_mode) {
-	Ref<ResourceLoader::LoadToken> token = _load_start(p_path, p_type_hint, p_use_sub_threads ? LOAD_THREAD_DISTRIBUTE : LOAD_THREAD_SPAWN_SINGLE, p_cache_mode, true);
+	// YGIAH (2026-10-31): deterministic mode — a threaded load finishes whenever
+	// the scheduler feels like it, so the tick at which LOADED is observed is
+	// wall-clock data baked into the sim timeline (attack B4). Run the load on
+	// the calling thread instead: it is fully complete when this call returns,
+	// so the completion tick is fixed by construction and no worker-side
+	// ObjectIDs/RIDs are ever allocated.
+	LoadThreadMode thread_mode = p_use_sub_threads ? LOAD_THREAD_DISTRIBUTE : LOAD_THREAD_SPAWN_SINGLE;
+	if (CoreGlobals::deterministic_mode) {
+		thread_mode = LOAD_THREAD_FROM_CURRENT;
+	}
+	Ref<ResourceLoader::LoadToken> token = _load_start(p_path, p_type_hint, thread_mode, p_cache_mode, true);
 	return token.is_valid() ? OK : FAILED;
 }
 

@@ -33,6 +33,7 @@
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
 #include "core/core_bind.h"
+#include "core/core_globals.h"
 #include "core/debugger/engine_debugger.h"
 #include "core/debugger/script_debugger.h"
 #include "core/object/callable_mp.h"
@@ -563,6 +564,13 @@ void ScriptServer::save_global_classes() {
 }
 
 Vector<Ref<ScriptBacktrace>> ScriptServer::capture_script_backtraces(bool p_include_variables) {
+	// YGIAH (2026-10-31): deterministic mode — ScriptBacktrace is a RefCounted,
+	// so capturing a backtrace while printing an error off the main thread would
+	// itself trip the ObjectDB worker-alloc ban (nested violation inside the
+	// error path). Skip capture there; worker-side errors still print plainly.
+	if (CoreGlobals::deterministic_mode && !Thread::is_main_thread()) {
+		return Vector<Ref<ScriptBacktrace>>();
+	}
 	if (is_program_exiting) {
 		return Vector<Ref<ScriptBacktrace>>();
 	}

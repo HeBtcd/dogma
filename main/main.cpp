@@ -276,6 +276,10 @@ static int frame_delay = 0;
 static int audio_output_latency = 0;
 static bool disable_render_loop = false;
 static int fixed_fps = -1;
+// YGIAH (2026-10-31): deterministic mode request state (applied after args are parsed).
+static bool deterministic_requested = false;
+static bool det_seed_given = false;
+static uint64_t det_seed = 0x5947C0FFEEULL; // Arbitrary fixed default; override with --det-seed or GODOT_DETERMINISTIC_SEED.
 static MovieWriter *movie_writer = nullptr;
 static bool disable_vsync = false;
 static bool print_fps = false;
@@ -629,6 +633,8 @@ void Main::print_help(const char *p_binary) {
 	print_help_option("--disable-render-loop", "Disable render loop so rendering only occurs when called explicitly from script.\n");
 	print_help_option("--disable-crash-handler", "Disable crash handler when supported by the platform code.\n");
 	print_help_option("--fixed-fps <fps>", "Force a fixed number of frames per second. This setting disables real-time synchronization.\n");
+	print_help_option("--deterministic", "Enable deterministic mode: WorkerThreadPool tasks execute inline in submission order, off-main-thread MessageQueue/ObjectDB/RID writes are rejected, threaded loads run synchronously, randomize() calls use a fixed seed sequence, and frame pacing is pinned to a fixed delta. Also settable via the GODOT_DETERMINISTIC environment variable.\n");
+	print_help_option("--det-seed <int>", "Set the deterministic mode RNG seed (implies --deterministic). Also settable via the GODOT_DETERMINISTIC_SEED environment variable.\n");
 	print_help_option("--delta-smoothing <enable>", "Enable or disable frame delta smoothing [\"enable\", \"disable\"].\n");
 	print_help_option("--print-fps", "Print the frames per second to the stdout.\n");
 #ifdef TOOLS_ENABLED
@@ -1931,6 +1937,18 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 				OS::get_singleton()->print("Missing fixed-fps argument, aborting.\n");
 				goto error;
 			}
+		} else if (arg == "--deterministic") { // YGIAH: engine-level deterministic mode
+			deterministic_requested = true;
+		} else if (arg == "--det-seed") {
+			if (N) {
+				det_seed = N->get().to_int();
+				det_seed_given = true;
+				deterministic_requested = true;
+				N = N->next();
+			} else {
+				OS::get_singleton()->print("Missing det-seed argument, aborting.\n");
+				goto error;
+			}
 		} else if (arg == "--write-movie") {
 			if (N) {
 				Engine::get_singleton()->set_write_movie_path(N->get());
@@ -2244,6 +2262,37 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 	Engine::get_singleton()->set_max_fps(GLOBAL_DEF(PropertyInfo(Variant::INT, "application/run/max_fps", PROPERTY_HINT_RANGE, "0,1000,1"), 0));
 	if (max_fps >= 0) {
 		Engine::get_singleton()->set_max_fps(max_fps);
+	}
+
+	// YGIAH (2026-10-31): Deterministic mode activation. The flag can come from
+	// --deterministic / --det-seed N on the command line or GODOT_DETERMINISTIC=1 /
+	// GODOT_DETERMINISTIC_SEED in the environment. All det-mode machinery keys off
+	// CoreGlobals::deterministic_mode from this point on (ObjectDB, CallQueue,
+	// RID_Alloc, WorkerThreadPool, ResourceLoader, RandomPCG).
+	if (!deterministic_requested && OS::get_singleton()->has_environment("GODOT_DETERMINISTIC")) {
+		String det_env = OS::get_singleton()->get_environment("GODOT_DETERMINISTIC");
+		deterministic_requested = !(det_env == "0" || det_env.to_lower() == "false");
+	}
+	if (deterministic_requested) {
+		CoreGlobals::deterministic_mode = true;
+		if (!det_seed_given && OS::get_singleton()->has_environment("GODOT_DETERMINISTIC_SEED")) {
+			det_seed = OS::get_singleton()->get_environment("GODOT_DETERMINISTIC_SEED").to_int();
+		}
+		CoreGlobals::deterministic_seed = det_seed;
+		CoreGlobals::deterministic_randomize_count = 0;
+		if (fixed_fps == -1) {
+			// Deterministic frame pacing is implied: idle delta becomes a fixed
+			// 1/physics_tps step rather than wall-clock time, so idle-delta
+			// consumers (Timer, AnimationPlayer, Tween, SceneTreeTimer - attack
+			// B6) advance in lockstep with physics ticks.
+			fixed_fps = Engine::get_singleton()->get_physics_ticks_per_second();
+		}
+		OS::get_singleton()->print(
+				"\n=== DETERMINISTIC MODE (det-seed=%llu, fixed-fps=%d) ===\n"
+				"  WorkerThreadPool tasks execute inline on the submitting thread, in submission order.\n"
+				"  Off-main-thread MessageQueue submissions / Object / server-RID writes are REJECTED.\n"
+				"  load_threaded_request runs synchronously; randomize() uses a fixed seed sequence.\n\n",
+				(unsigned long long)det_seed, fixed_fps);
 	}
 
 	// Initialize user data dir.

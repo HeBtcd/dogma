@@ -441,6 +441,14 @@ bool Engine::is_embedded_in_editor() const {
 	return embedded_in_editor;
 }
 
+bool Engine::is_deterministic() const {
+	return CoreGlobals::deterministic_mode;
+}
+
+uint64_t Engine::get_deterministic_seed() const {
+	return CoreGlobals::deterministic_seed;
+}
+
 Engine::Engine() {
 	singleton = this;
 }

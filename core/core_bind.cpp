@@ -2080,6 +2080,14 @@ bool Engine::is_embedded_in_editor() const {
 	return ::Engine::get_singleton()->is_embedded_in_editor();
 }
 
+bool Engine::is_deterministic() const {
+	return ::Engine::get_singleton()->is_deterministic();
+}
+
+uint64_t Engine::get_deterministic_seed() const {
+	return ::Engine::get_singleton()->get_deterministic_seed();
+}
+
 String Engine::get_write_movie_path() const {
 	return ::Engine::get_singleton()->get_write_movie_path();
 }
@@ -2159,6 +2167,9 @@ void Engine::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("is_editor_hint"), &Engine::is_editor_hint);
 	ClassDB::bind_method(D_METHOD("is_embedded_in_editor"), &Engine::is_embedded_in_editor);
+
+	ClassDB::bind_method(D_METHOD("is_deterministic"), &Engine::is_deterministic);
+	ClassDB::bind_method(D_METHOD("get_deterministic_seed"), &Engine::get_deterministic_seed);
 
 	ClassDB::bind_method(D_METHOD("get_write_movie_path"), &Engine::get_write_movie_path);
 

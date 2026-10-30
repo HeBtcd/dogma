@@ -30,6 +30,7 @@
 
 #include "worker_thread_pool.h"
 
+#include "core/core_globals.h"
 #include "core/object/class_db.h"
 #include "core/object/message_queue.h"
 #include "core/object/script_language.h"
@@ -56,8 +57,19 @@ thread_local WorkerThreadPool::UnlockableLocks WorkerThreadPool::unlockable_lock
 
 void WorkerThreadPool::_process_task(Task *p_task) {
 #ifdef THREADS_ENABLED
-	int pool_thread_index = thread_ids[Thread::get_caller_id()];
-	ThreadData &curr_thread = threads[pool_thread_index];
+	// YGIAH (2026-10-31): in deterministic mode tasks run on the submitting
+	// (non-pool) thread; the same applies to the zero-thread fallback below.
+	// Upstream did `thread_ids[caller]` + `threads[...]` unconditionally, which
+	// is out-of-bounds for non-pool callers. Non-pool callers get a private
+	// bookkeeping slot instead.
+	static thread_local ThreadData non_pool_thread;
+	const int *pool_thread_index_ptr = thread_ids.getptr(Thread::get_caller_id());
+	const int pool_thread_index = pool_thread_index_ptr ? *pool_thread_index_ptr : -1;
+	ThreadData &curr_thread = pool_thread_index >= 0 ? threads[pool_thread_index] : non_pool_thread;
+	if (pool_thread_index < 0) {
+		curr_thread.pool = this;
+		curr_thread.index = threads.size();
+	}
 	Task *prev_task = nullptr; // In case this is recursively called.
 
 	bool safe_for_nodes_backup = is_current_thread_safe_for_nodes();
@@ -226,8 +238,12 @@ void WorkerThreadPool::_post_tasks(Task **p_tasks, uint32_t p_count, bool p_high
 	// Separated into its own variable to make it easier to extend this logic
 	// in custom builds.
 
-	// Avoid calling pump tasks or low priority tasks from the calling thread.
-	bool process_on_calling_thread = threads.is_empty() && !p_pump_task;
+	// YGIAH (2026-10-31): in deterministic mode, the pool is a serial executor:
+	// every task runs inline on the submitting thread, in submission order. There
+	// is no schedule left for deferred-call order, ObjectID interleaving, task
+	// results or completion ticks to leak (attacks B1, B2, B4, B5). Pump tasks
+	// keep dedicated real threads (they are explicitly requested forever-threads).
+	bool process_on_calling_thread = (threads.is_empty() || CoreGlobals::deterministic_mode) && !p_pump_task;
 	if (process_on_calling_thread) {
 		p_lock.temp_unlock();
 		for (uint32_t i = 0; i < p_count; i++) {

@@ -631,6 +631,10 @@ public:
 
 	bool is_embedded_in_editor() const;
 
+	// YGIAH (2026-10-31): Deterministic mode query.
+	bool is_deterministic() const;
+	uint64_t get_deterministic_seed() const;
+
 	// `set_write_movie_path()` is not exposed to the scripting API as changing it at run-time has no effect.
 	String get_write_movie_path() const;
 
