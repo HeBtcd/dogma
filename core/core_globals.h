@@ -30,6 +30,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 // Home for state needed from global functions
 // that cannot be stored in Engine or OS due to e.g. circular includes
 
@@ -39,4 +41,18 @@ public:
 	static inline bool print_line_enabled = true;
 	static inline bool print_error_enabled = true;
 	static inline bool print_ready = false;
+
+	// YGIAH (2026-10-31): Deterministic mode ("det-mode"), activated via
+	// --deterministic / --det-seed N or GODOT_DETERMINISTIC=1 in Main::setup.
+	// When true the engine removes or loudly rejects every nondeterminism that
+	// leaked scheduler state into game state (godot-det-test attacks B1-B6):
+	// WorkerThreadPool tasks run inline on the submitting thread, off-main-thread
+	// MessageQueue submissions / ObjectDB registrations / server RID writes are
+	// rejected, load_threaded_request runs synchronously, RandomPCG::randomize()
+	// draws from the fixed sequence below, and frame pacing is pinned to a
+	// fixed delta. Kept in CoreGlobals (not Engine) because ObjectDB/CallQueue/
+	// RID_Alloc cannot afford an Engine dependency.
+	static inline bool deterministic_mode = false;
+	static inline uint64_t deterministic_seed = 0;
+	static inline uint64_t deterministic_randomize_count = 0;
 };

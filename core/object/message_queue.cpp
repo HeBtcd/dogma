@@ -31,6 +31,8 @@
 #include "message_queue.h"
 
 #include "core/config/project_settings.h"
+#include "core/core_globals.h"
+#include "core/os/thread.h"
 
 #include <cstdio>
 
@@ -81,7 +83,16 @@ Error CallQueue::push_set(Object *p_object, const StringName &p_prop, const Vari
 	return push_set(p_object->get_instance_id(), p_prop, p_value);
 }
 
+// YGIAH (2026-10-31): deterministic mode — a deferred call/set/notification
+// submitted from a non-main thread lands in the queue at a scheduler-decided
+// position; the flush order is then wall-clock data baked into the scene
+// (attack B1: worker call_deferred -> add_child order). Reject loudly rather
+// than attempt to sort: sorted multi-producer order is itself unprovable.
+#define DET_QUEUE_CHECK() \
+	ERR_FAIL_COND_V_MSG(CoreGlobals::deterministic_mode && !Thread::is_main_thread(), ERR_UNAUTHORIZED, "DETERMINISTIC MODE: deferred calls may only be submitted from the main thread (off-main MessageQueue order is schedule data, attack B1).")
+
 Error CallQueue::push_callablep(const Callable &p_callable, const Variant **p_args, int p_argcount, bool p_show_error) {
+	DET_QUEUE_CHECK();
 	uint32_t room_needed = sizeof(Message) + sizeof(Variant) * p_argcount;
 
 	ERR_FAIL_COND_V_MSG(room_needed > uint32_t(PAGE_SIZE_BYTES), ERR_INVALID_PARAMETER, "Message is too large to fit on a page (" + itos(PAGE_SIZE_BYTES) + " bytes), consider passing less arguments.");
@@ -132,6 +143,7 @@ Error CallQueue::push_callablep(const Callable &p_callable, const Variant **p_ar
 }
 
 Error CallQueue::push_set(ObjectID p_id, const StringName &p_prop, const Variant &p_value) {
+	DET_QUEUE_CHECK();
 	LOCK_MUTEX;
 	uint32_t room_needed = sizeof(Message) + sizeof(Variant);
 
@@ -172,6 +184,7 @@ Error CallQueue::push_set(ObjectID p_id, const StringName &p_prop, const Variant
 }
 
 Error CallQueue::push_notification(ObjectID p_id, int p_notification) {
+	DET_QUEUE_CHECK();
 	ERR_FAIL_COND_V(p_notification < 0, ERR_INVALID_PARAMETER);
 	LOCK_MUTEX;
 	uint32_t room_needed = sizeof(Message);

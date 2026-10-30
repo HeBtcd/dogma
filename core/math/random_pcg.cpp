@@ -30,6 +30,7 @@
 
 #include "random_pcg.h"
 
+#include "core/core_globals.h"
 #include "core/os/os.h"
 #include "core/templates/vector.h"
 
@@ -40,6 +41,18 @@ RandomPCG::RandomPCG(uint64_t p_seed, uint64_t p_inc) :
 }
 
 void RandomPCG::randomize() {
+	// YGIAH (2026-10-31): deterministic mode — randomize() must not draw from the
+	// wall clock (this is what seeded Math::randomize() in SceneTree's ctor and
+	// RandomNumberGenerator's ctor/randomize, i.e. the unseeded-RNG attack vector).
+	// Every call instead consumes one entry of a fixed seed sequence; in det-mode
+	// the call order is itself deterministic (single-threaded execution), so the
+	// whole sequence is reproducible run-to-run while still giving distinct RNGs
+	// distinct streams.
+	if (CoreGlobals::deterministic_mode) {
+		const uint64_t det_count = CoreGlobals::deterministic_randomize_count++;
+		seed(CoreGlobals::deterministic_seed + det_count * 0x9E3779B97F4A7C15ULL);
+		return;
+	}
 	seed(((uint64_t)OS::get_singleton()->get_unix_time() + OS::get_singleton()->get_ticks_usec()) * pcg.state + PCG_DEFAULT_INC_64);
 }
 

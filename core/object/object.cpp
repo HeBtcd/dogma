@@ -32,12 +32,14 @@
 #include "object.compat.inc"
 
 #include "core/config/engine.h"
+#include "core/core_globals.h"
 #include "core/extension/gdextension_manager.h"
 #include "core/io/resource.h"
 #include "core/object/class_db.h"
 #include "core/object/message_queue.h"
 #include "core/object/script_language.h"
 #include "core/os/os.h"
+#include "core/os/thread.h"
 #include "core/string/print_string.h"
 #include "core/string/translation_server.h"
 #include "core/variant/typed_array.h"
@@ -2522,6 +2524,13 @@ int ObjectDB::get_object_count() {
 }
 
 ObjectID ObjectDB::add_instance(Object *p_object) {
+	// YGIAH (2026-10-31): deterministic mode — the ObjectID sequence must stay a
+	// pure function of main-thread allocation order. Any Object instantiated on a
+	// worker (even a pure-compute RandomNumberGenerator) interleaves slot+validator
+	// assignments and shifts every subsequent main-thread id (attacks B2/B5).
+	// Hard abort: returning an invalid id would leave a half-registered object
+	// whose downstream lifecycle is unsound.
+	CRASH_COND_MSG(CoreGlobals::deterministic_mode && !Thread::is_main_thread(), "DETERMINISTIC MODE: Object instantiated off the main thread would pollute the global ObjectID sequence (attacks B2/B5). WorkerThreadPool callbacks already run on the main thread in det-mode; raw Thread code may not allocate Objects.");
 	spin_lock.lock();
 	if (unlikely(slot_count == slot_max)) {
 		CRASH_COND(slot_count == (1 << OBJECTDB_SLOT_MAX_COUNT_BITS));
@@ -2566,6 +2575,10 @@ ObjectID ObjectDB::add_instance(Object *p_object) {
 }
 
 void ObjectDB::remove_instance(Object *p_object) {
+	// YGIAH (2026-10-31): deterministic mode — frees mutate the slot reuse order,
+	// so they are main-thread domain too. Hard abort: skipping the removal would
+	// leave the slot dangling to freed memory.
+	CRASH_COND_MSG(CoreGlobals::deterministic_mode && !Thread::is_main_thread(), "DETERMINISTIC MODE: Object freed off the main thread would pollute the ObjectID reuse order (attacks B2/B5).");
 	uint64_t t = p_object->get_instance_id();
 	uint32_t slot = t & OBJECTDB_SLOT_MAX_COUNT_MASK; //slot is always valid on valid object
 

@@ -248,6 +248,10 @@ public:
 	void set_embedded_in_editor(bool p_enabled);
 	bool is_embedded_in_editor() const;
 
+	// YGIAH (2026-10-31): Deterministic mode query (state lives in CoreGlobals).
+	bool is_deterministic() const;
+	uint64_t get_deterministic_seed() const;
+
 	Engine();
 	virtual ~Engine();
 };
