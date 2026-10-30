@@ -2985,7 +2985,13 @@ uint32_t Variant::recursive_hash(int p_recursion_count) const {
 			return hash_one_uint64(reinterpret_cast<const ::RID *>(_data._mem)->get_id());
 		} break;
 		case OBJECT: {
-			return hash_one_uint64(reinterpret_cast<uint64_t>(_get_obj().obj));
+			// YGIAH (2026-10-30): Hash the ObjectID stored in ObjData instead of
+			// raw Object* bits. Pointer bits are ASLR-randomized per process, so
+			// hash(Object) diverged across runs in a deterministic single-threaded
+			// scene (godot-det-test attack B3). ObjData.id is allocation-order-stable
+			// and stays valid even after the object is freed; a null obj hashes as 0,
+			// same as before.
+			return hash_one_uint64((uint64_t)_get_obj().id);
 		} break;
 		case STRING_NAME: {
 			return reinterpret_cast<const StringName *>(_data._mem)->hash();
