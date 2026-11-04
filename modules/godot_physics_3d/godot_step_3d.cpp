@@ -54,11 +54,7 @@ struct _DetConstraintLess {
 		return _det_constraint_less(a, b);
 	}
 };
-struct _DetConstraintKVLess {
-	_FORCE_INLINE_ bool operator()(const KeyValue<GodotConstraint3D *, int> &a, const KeyValue<GodotConstraint3D *, int> &b) const {
-		return _det_constraint_less(a.key, b.key);
-	}
-};
+
 struct _DetCMapEntry {
 	GodotConstraint3D *key;
 	int value;
